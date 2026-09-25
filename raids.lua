@@ -1,0 +1,281 @@
+-- raid.lua
+local Spirit = getgenv().Spirit
+if not Spirit then error("[raid] core.lua not loaded") end
+if not Spirit.FunctionsHandler then error("[raid] tasks.lua not loaded") end
+
+local Services      = Spirit.Services
+local ReplicatedStorage = Services.ReplicatedStorage
+local LocalPlayer   = Spirit.LocalPlayer
+local ScriptStorage = Spirit.ScriptStorage
+local Remotes       = Spirit.Remotes
+local SetTask       = Spirit.SetTask
+
+-- ═══════════════════════════════════════════════════════════════
+-- RaidController
+-- ═══════════════════════════════════════════════════════════════
+local RC = Spirit.FunctionsHandler.RaidController
+
+RC:RegisterMethod("RefreshRaidType", function()
+    local ok, raids = pcall(function() return require(ReplicatedStorage.Raids).raids end)
+    if ok and raids then
+        for _, r in pairs(raids) do
+            if string.find(tostring(ScriptStorage.PlayerData.DevilFruit or ""), r) then
+                RC:Set("CurrentChip", r)
+                return
+            end
+        end
+    end
+    RC:Set("CurrentChip", "Flame")
+end)
+
+function Spirit.CheckSpecialMicrochip()
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    local char = LocalPlayer.Character
+    for _, container in ipairs({char, bp}) do
+        if container then
+            for _, v in ipairs(container:GetChildren()) do
+                if v.Name == "Special Microchip" then return v end
+            end
+        end
+    end
+    return nil
+end
+
+local function pickCheapestFruit()
+    for _, entry in pairs(ScriptStorage.Backpack) do
+        if entry.Type == "Blox Fruit" or (entry.Name and entry.Name:find("Fruit")) then
+            return entry
+        end
+    end
+    for _, entry in pairs(ScriptStorage.Backpack) do
+        if entry.Name and entry.Name:find("Fruit") then return entry end
+    end
+end
+
+RC:RegisterMethod("GetCurrentRaidIsland", function()
+    local origin = workspace:FindFirstChild("_WorldOrigin")
+    if not origin or not origin:FindFirstChild("Locations") then return nil end
+    local islands = {{}, {}, {}, {}, {}}
+    for _, k in ipairs(origin.Locations:GetChildren()) do
+        if string.find(k.Name, "Island ") and Spirit.CaculateDistance(k.Position, Vector3.new(0,0,0)) > 7000 then
+            local num = tonumber(string.gsub(k.Name, "Island ", ""))
+            if num and islands[num] then table.insert(islands[num], k) end
+        end
+    end
+    for i = 5, 1, -1 do
+        for _, isl in ipairs(islands[i]) do
+            if Spirit.CaculateDistance(isl.Position) < 2000 then return isl end
+        end
+    end
+    return nil
+end)
+
+RC:RegisterMethod("Refresh", function()
+    local lv = ScriptStorage.PlayerData.Level or 0
+    if lv < 1300 then return nil end
+    if Spirit.CheckSpecialMicrochip() then return nil end
+    local fr = ScriptStorage.PlayerData.Fragments or 0
+    if lv < 1500 and fr > 2000 then return nil end
+    if lv < Spirit.MaxLevel and fr > 5000 then return nil end
+    if lv >= Spirit.MaxLevel and fr > 10000 then return nil end
+    local fruit = pickCheapestFruit()
+    if fruit then RC:Set("CurrentProgressLevel", fruit) end
+    return fruit or RC.Methods.GetCurrentRaidIsland:Call() or Spirit.CheckSpecialMicrochip()
+end)
+
+RC:RegisterMethod("Start", function()
+    if not RC:Get("CurrentChip") then RC.Methods.RefreshRaidType:Call() end
+    local island = RC.Methods.GetCurrentRaidIsland:Call()
+    Spirit.RefreshInventory()
+    RC:Set("CurrentProgressLevel", nil)
+
+    if not island then
+        SetTask("MainTask", "Auto Raid | Buying chip - " .. RC:Get("CurrentChip"))
+        if not Spirit.CheckSpecialMicrochip() then
+            local fruit = pickCheapestFruit()
+            if fruit then
+                table.insert(ScriptStorage.IgnoreStoreFruits, fruit.Name)
+                Remotes.CommF_:InvokeServer("LoadFruit", fruit.Name)
+                Remotes.CommF_:InvokeServer("RaidsNpc", "Select", RC:Get("CurrentChip"))
+                task.wait(2)
+            end
+        end
+        local mapName = ({nil, "Circle Island", "Boat Castle"})[Spirit.SeaIndex]
+        if mapName then
+            local mapObj = workspace.Map:FindFirstChild(mapName) or workspace:FindFirstChild(mapName)
+            if mapObj and not mapObj:FindFirstChild("RaidSummon2") then
+                Spirit.TweenController.Create(mapObj:GetModelCFrame())
+            end
+            Spirit.FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Special Microchip")
+            local summon = mapObj and mapObj:FindFirstChild("RaidSummon2")
+            if summon and summon:FindFirstChild("Button") then
+                pcall(function() fireclickdetector(summon.Button.Main.ClickDetector) end)
+            end
+        end
+        local t0 = os.time()
+        repeat task.wait() until os.time() - (Spirit.LastRaidAlert2 or 0) < 20 or os.time() - t0 > 30
+        if os.time() - t0 > 30 then
+            ReplicatedStorage.__ServerBrowser:InvokeServer("teleport", game.JobId)
+        end
+    else
+        SetTask("MainTask", "Auto Raid | " .. island.Name)
+        local num = tonumber(string.match(island.Name, "(%d+)"))
+        if num and num >= 4 then
+            Spirit.TweenController.Create(island.Position + Vector3.new(0, 50, 0))
+            task.wait(0.5)
+            for _, v in ipairs(workspace.Enemies:GetChildren()) do
+                pcall(function()
+                    if v:FindFirstChild("Humanoid") then v.Humanoid.Health = 0 end
+                    if v:FindFirstChild("HumanoidRootPart") then v.HumanoidRootPart.CanCollide = false end
+                    v:BreakJoints()
+                end)
+            end
+        else
+            for _, e in ipairs(Spirit.GetMonAsSortedRange()) do
+                if Spirit.CaculateDistance(e.HumanoidRootPart.Position) < 1000 then
+                    Spirit.CombatController.Attack(e.Name)
+                end
+            end
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- AutoRaidIce
+-- ═══════════════════════════════════════════════════════════════
+local ARI = Spirit.FunctionsHandler.AutoRaidIce
+local ICE_CHIP_COOLDOWN = 2 * 60 * 60
+
+ARI:RegisterMethod("GetCheapestFruit", function(maxPrice)
+    maxPrice = maxPrice or 1000000
+    local ok1, prices = pcall(function() return Remotes.CommF_:InvokeServer("GetFruits") end)
+    local ok2, inv = pcall(function() return Remotes.CommF_:InvokeServer("getInventoryFruits") end)
+    if not ok1 or not ok2 then return nil end
+    local priceMap = {}
+    for _, v in pairs(prices) do
+        if v.Price and v.Price <= maxPrice then priceMap[v.Name] = v.Price end
+    end
+    local best, lowest = nil, math.huge
+    for _, f in pairs(inv) do
+        if f.Name and priceMap[f.Name] and priceMap[f.Name] < lowest then
+            lowest = priceMap[f.Name]
+            best = f.Name
+        end
+    end
+    return best, lowest
+end)
+
+ARI:RegisterMethod("BuyChip", function()
+    local lastBuy = Spirit.Storage:Get("RaidIceLastChipBuy") or 0
+    if os.time() - lastBuy < ICE_CHIP_COOLDOWN then return false end
+    local fruit = ARI.Methods.GetCheapestFruit:Call(1000000)
+    if fruit then
+        table.insert(ScriptStorage.IgnoreStoreFruits, fruit)
+        Remotes.CommF_:InvokeServer("LoadFruit", fruit)
+        task.wait(0.5)
+        Remotes.CommF_:InvokeServer("RaidsNpc", "Select", "Ice")
+        task.wait(1)
+        Spirit.RefreshInventory()
+        if Spirit.CheckSpecialMicrochip() then
+            Spirit.Storage:Set("RaidIceLastChipBuy", os.time())
+            Spirit.Storage:Save()
+            return true
+        end
+    end
+    return false
+end)
+
+ARI:RegisterMethod("Refresh", function()
+    local lv = ScriptStorage.PlayerData.Level or 0
+    local fr = ScriptStorage.PlayerData.Fragments or 0
+    local target = (Spirit.Config and Spirit.Config.AutoRaidIce_TargetFragments) or 5000
+    if lv < 1300 then return nil end
+    if fr >= target then return nil end
+    if Spirit.CheckSpecialMicrochip() then return true end
+    local island = RC.Methods.GetCurrentRaidIsland:Call()
+    if island then return true end
+    local lastBuy = Spirit.Storage:Get("RaidIceLastChipBuy") or 0
+    if os.time() - lastBuy >= ICE_CHIP_COOLDOWN then return true end
+    return nil
+end)
+
+ARI:RegisterMethod("Start", function()
+    local target = (Spirit.Config and Spirit.Config.AutoRaidIce_TargetFragments) or 5000
+    local fr = ScriptStorage.PlayerData.Fragments or 0
+    if fr >= target then return end
+
+    local island = RC.Methods.GetCurrentRaidIsland:Call()
+    if island then
+        SetTask("MainTask", "Raid Ice | " .. fr .. "/" .. target .. " | " .. island.Name)
+        local num = tonumber(string.match(island.Name, "(%d+)"))
+        if num and num >= 3 then
+            Spirit.TweenController.Create(island.Position + Vector3.new(0, 50, 0))
+            task.wait(0.5)
+            pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
+            for _, v in ipairs(workspace.Enemies:GetChildren()) do
+                pcall(function()
+                    if v:FindFirstChild("Humanoid") then v.Humanoid.Health = 0 end
+                    v:BreakJoints()
+                end)
+            end
+        else
+            for _, e in ipairs(Spirit.GetMonAsSortedRange()) do
+                if Spirit.CaculateDistance(e.HumanoidRootPart.Position) < 1500 then
+                    Spirit.CombatController.Attack(e.Name)
+                    return
+                end
+            end
+            Spirit.TweenController.Create(island.Position + Vector3.new(0, 100, 0))
+        end
+        return
+    end
+
+    if not Spirit.CheckSpecialMicrochip() then
+        if not ARI.Methods.BuyChip:Call() then return end
+        task.wait(2)
+        Spirit.RefreshInventory()
+    end
+    if not Spirit.CheckSpecialMicrochip() then return end
+
+    local mapName = ({nil, "Circle Island", "Boat Castle"})[Spirit.SeaIndex]
+    if not mapName then return end
+    local mapObj = workspace.Map:FindFirstChild(mapName) or workspace:FindFirstChild(mapName)
+    if not mapObj then return end
+
+    if not mapObj:FindFirstChild("RaidSummon2") then
+        Spirit.TweenController.Create(mapObj:GetModelCFrame())
+        task.wait(1)
+        return
+    end
+
+    Spirit.FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call("Special Microchip")
+    local summon = mapObj:FindFirstChild("RaidSummon2")
+    local ok = false
+    for retry = 1, 3 do
+        if retry > 1 then task.wait(3) end
+        pcall(function()
+            local prompt = summon:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt and fireproximityprompt then
+                fireproximityprompt(prompt)
+                ok = true
+            else
+                local click = summon:FindFirstChildWhichIsA("ClickDetector", true)
+                if click then fireclickdetector(click); ok = true end
+            end
+        end)
+        if ok then break end
+    end
+
+    SetTask("MainTask", "Raid Ice | Waiting raid start")
+    local t0 = os.time()
+    repeat task.wait(0.5) until os.time() - (Spirit.LastRaidAlert2 or 0) < 20
+                          or os.time() - (Spirit.LastRaidAlert or 0) < 20
+                          or os.time() - t0 > 35
+    if os.time() - t0 > 35 then
+        Spirit.Report("[RaidIce] Raid didn't start")
+    else
+        Spirit.LastRaidAlert = 0
+    end
+end)
+
+print("[Spirit] raid.lua loaded")
