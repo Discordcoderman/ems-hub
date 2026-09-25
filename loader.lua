@@ -18,7 +18,7 @@ local MODULES = {
     "level_farm.lua",
 
     "player.lua",
-    "melee.lua",
+        "mele.lua",    -- was "melee.lua"
     "bosses.lua",
     "sword_bosses.lua",
     "cake_prince.lua",
