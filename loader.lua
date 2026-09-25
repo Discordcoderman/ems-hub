@@ -5,7 +5,7 @@
 ]]
 
 local BRANCH = "main"
-local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/src/%%s"):format(BRANCH)
+local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s"):format(BRANCH)
 
 local MODULES = {
     "core.lua",
@@ -22,11 +22,11 @@ local MODULES = {
     "bosses.lua",
     "sword_bosses.lua",
     "cake_prince.lua",
-    "raids.lua",            -- was raid.lua
-    "swords_quests.lua",    -- was sword_quests.lua
+    "raids.lua",
+    "swords_quests.lua",
     "race.lua",
     "soul_guitar.lua",
-    "utility.lua",          -- was utilly.lua
+    "utility.lua",
 
     "sea.lua",
     "extras.lua",
