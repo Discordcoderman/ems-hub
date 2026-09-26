@@ -1,4 +1,5 @@
--- extras.lua — Redeem, no-anim, auto-gacha, auto-collect fruits, VOid attack
+-- extras.lua — Redeem (first-run only), no-anim, auto-gacha, VOid attack
+-- Fruit collection moved to utility.lua's CollectDrops task.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[extras] core.lua not loaded") end
 
@@ -9,16 +10,28 @@ local ReplicatedStorage = Services.ReplicatedStorage
 if Spirit.Config then
     Spirit.Config.Extras = Spirit.Config.Extras or {}
     local E = Spirit.Config.Extras
-    if E.AutoGachaFruit   == nil then E.AutoGachaFruit   = false end
-    if E.GachaMinBeli     == nil then E.GachaMinBeli     = 100000 end
-    if E.AutoCollectFruit == nil then E.AutoCollectFruit = true end
-    if E.CollectInterval  == nil then E.CollectInterval  = 60 end
+    if E.AutoGachaFruit == nil then E.AutoGachaFruit = false end
+    if E.GachaMinBeli   == nil then E.GachaMinBeli   = 100000 end
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- Auto Redeem — FIRST-RUN ONLY (gated by Storage flag)
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
+    repeat task.wait(1) until Spirit.Storage
+
+    if Spirit.Storage:Get("CodesRedeemed_v2") then
+        print("[extras] codes already redeemed on this account — skipping")
+        return
+    end
+
     local Remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
     local Redeem = Remotes and Remotes:WaitForChild("Redeem", 30)
-    if not Redeem then return end
+    if not Redeem then
+        print("[extras] Redeem remote not found")
+        return
+    end
+
     local CODES = {
         "EASTEREXP","fudd10","fudd10_V2","Chandler","BIGNEWS",
         "KITT_RESET","Sub2UncleKizaru","SUB2GAMERROBOT_RESET1",
@@ -27,12 +40,19 @@ task.spawn(function()
         "Sub2NoobMaster123","Sub2Daigrock","Axiore","StrawHatMaine",
         "TantaiGaming","Bluxxy","SUB2GAMERROBOT_EXP1",
     }
-    for _, code in ipairs(CODES) do
+
+    print("[extras] first run — redeeming " .. #CODES .. " codes")
+    for i, code in ipairs(CODES) do
         pcall(function() Redeem:InvokeServer(code) end)
-        task.wait(1.5)
+        task.wait(1.2)
     end
+
+    Spirit.Storage:Set("CodesRedeemed_v2", true)
+    Spirit.Storage:Save()
+    print("[extras] codes redeemed")
 end)
 
+-- No Animation
 task.spawn(function()
     if not (Spirit.Config and Spirit.Config.Extras and Spirit.Config.Extras.NoAnimation) then return end
     local function disable(char)
@@ -98,90 +118,7 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- Auto Collect Fruits — every 60s, only models with FruitAnimator
--- ═══════════════════════════════════════════════════════════════
-task.spawn(function()
-    repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
-
-    local function isFruitModel(obj)
-        if not obj or not obj.Parent then return false end
-        if not obj:IsA("Model") then return false end
-        return obj:FindFirstChild("FruitAnimator") ~= nil
-    end
-
-    local function collectFruit(fruit)
-        local char = LocalPlayer.Character
-        if not char then return false end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return false end
-
-        local target = fruit:FindFirstChild("Handle")
-                    or fruit.PrimaryPart
-                    or fruit:FindFirstChildWhichIsA("BasePart")
-        if not target or not target.Position then return false end
-
-        Spirit.TweenController.Create(CFrame.new(target.Position + Vector3.new(0, 3, 0)))
-        task.wait(0.6)
-        pcall(function()
-            if firetouchinterest then
-                firetouchinterest(hrp, target, 0)
-                task.wait()
-                firetouchinterest(hrp, target, 1)
-            end
-        end)
-        task.wait(0.4)
-        if fruit.Parent then
-            local name = fruit:GetAttribute("OriginalName")
-                       or (fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
-                       or fruit.Name
-            pcall(function() Spirit.Remotes.CommF_:InvokeServer("StoreFruit", name, fruit) end)
-        end
-        return true
-    end
-
-    while task.wait(Spirit.Config.Extras.CollectInterval or 60) do
-        pcall(function()
-            local E = Spirit.Config and Spirit.Config.Extras
-            if not E or not E.AutoCollectFruit then return end
-
-            if _G.FastAttack and (os.time() - _G.FastAttack) < 5 then return end
-            local sub = Spirit.ScriptStorage.Task and Spirit.ScriptStorage.Task.SubTask
-            if sub and (tostring(sub):find("Attack") or tostring(sub):find("attack")) then return end
-
-            local nearbyEnemy = false
-            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                for _, e in ipairs(workspace.Enemies:GetChildren()) do
-                    local er = e:FindFirstChild("HumanoidRootPart")
-                    local eh = e:FindFirstChild("Humanoid")
-                    if er and eh and eh.Health > 0
-                       and (er.Position - hrp.Position).Magnitude < 60 then
-                        nearbyEnemy = true
-                        break
-                    end
-                end
-            end
-            if nearbyEnemy then return end
-
-            local fruits = {}
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if isFruitModel(obj) then table.insert(fruits, obj) end
-            end
-            if #fruits == 0 then return end
-
-            print(("[fruits] found %d collectable fruit(s)"):format(#fruits))
-            for _, f in ipairs(fruits) do
-                if _G.Stop then return end
-                if f.Parent then
-                    collectFruit(f)
-                    task.wait(0.3)
-                end
-            end
-        end)
-    end
-end)
-
+-- VOid ATTACK
 do
     local RS = ReplicatedStorage
     local Net = RS:WaitForChild("Modules"):WaitForChild("Net")
