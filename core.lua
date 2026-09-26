@@ -269,26 +269,18 @@ function Spirit.RefreshPlayerData()
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- AddPoint — only fires when there's a real point to spend
--- and the level has changed since the last call. No more spam.
--- ═══════════════════════════════════════════════════════════════
-local lastAddPointLevel = 0
-local lastAddPointAt    = 0
-Spirit._AddPointState   = {lastLevel = 0, lastCall = 0}
+-- AddPoint — self-gated to fire once per level change
+Spirit._AddPointState = {lastLevel = 0, lastCall = 0}
 
 function Spirit.AddPoint()
-    -- Require Data
     local data = LocalPlayer:FindFirstChild("Data")
     if not data then return end
     local pts = data:FindFirstChild("Points")
     if not pts then return end
 
-    -- Points available?
     local points = tonumber(pts.Value) or 0
     if points <= 0 then return end
 
-    -- Only fire once per level change
     local lvl = (data:FindFirstChild("Level") and tonumber(data.Level.Value)) or 0
     local state = Spirit._AddPointState
     if lvl == state.lastLevel and (os.time() - state.lastCall) < 5 then
@@ -297,7 +289,6 @@ function Spirit.AddPoint()
     state.lastLevel = lvl
     state.lastCall  = os.time()
 
-    -- Read current stat levels
     local stats = {}
     pcall(function()
         for _, s in ipairs(data.Stats:GetChildren()) do
@@ -429,7 +420,6 @@ local function RegisterLocalPlayerEventsConnection()
     ScriptStorage.Connections.LocalPlayer.Fruit = bp.ChildAdded:Connect(MeleeCheck)
     for _, c in ipairs(bp:GetChildren()) do MeleeCheck(c) end
 
-    -- Points listener — AddPoint now self-gates
     local pts = LocalPlayer.Data:WaitForChild("Points")
     ScriptStorage.Connections.LocalPlayer.PointConnection =
         pts:GetPropertyChangedSignal("Value"):Connect(function()
@@ -451,12 +441,8 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- TEAM SET — waits for Config to actually be published by data.lua
--- before trying to read Config.Team. No more "index nil with Team".
--- ═══════════════════════════════════════════════════════════════
+-- Team set — waits for Config to be published
 task.spawn(function()
-    -- Wait up to 30s for Config to appear
     local deadline = os.time() + 30
     while os.time() < deadline do
         local cfg = Spirit.Config or getgenv().Config
@@ -472,19 +458,17 @@ task.spawn(function()
 
     local team = cfg.Team
 
-    -- Set team, retry until character confirms
-    while true do
+    if not Spirit.Character then
+        repeat task.wait(0.25) until Spirit.Character
+    end
+
+    for attempt = 1, 5 do
         pcall(function()
             game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", team)
         end)
-        if Spirit.Character then break end
-        task.wait(1)
+        task.wait(2)
     end
-
-    -- One more call after character exists (safety)
-    pcall(function()
-        game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", team)
-    end)
+    Spirit.SetTask("SubTask", "Team: " .. tostring(team))
 end)
 
 task.spawn(function()
