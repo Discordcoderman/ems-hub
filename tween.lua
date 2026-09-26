@@ -1,4 +1,4 @@
--- tween.lua — TweenController + block-tween + HoverOver + GetPortal
+-- tween.lua — TweenController with descendant-wide noclip
 local Spirit = getgenv().Spirit
 if not Spirit then error("[tween] core.lua not loaded") end
 
@@ -29,14 +29,38 @@ Spirit.TweenDestination = nil
 
 local noclipActive = false
 
+-- Noclip EVERY BasePart in the character (descendants too — hats,
+-- accessories, tools) so WaterBase and other terrain can't block.
 local function setCharacterCollision(state)
     local char = LocalPlayer.Character
     if not char then return end
-    for _, part in ipairs(char:GetChildren()) do
-        if part:IsA("BasePart") then part.CanCollide = state end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = state
+        end
     end
 end
 Spirit.SetCharacterCollision = setCharacterCollision
+
+-- Strip collision from water parts once, globally, so nothing can
+-- ever stick on them.
+task.spawn(function()
+    while task.wait(5) do
+        pcall(function()
+            local map = Workspace:FindFirstChild("Map")
+            if map then
+                for _, obj in ipairs(map:GetDescendants()) do
+                    if obj:IsA("BasePart") then
+                        local n = obj.Name:lower()
+                        if n:find("waterbase") or n:find("water_base") or n:find("waterplains") then
+                            obj.CanCollide = false
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
 
 task.spawn(function()
     while task.wait() do
@@ -112,26 +136,12 @@ local function GetPortal(target)
         end
     end
     if best then
-        pcall(function()
-            Spirit.Remotes.CommF_:InvokeServer("requestEntrance", best)
-        end)
+        pcall(function() Spirit.Remotes.CommF_:InvokeServer("requestEntrance", best) end)
         task.wait()
     end
     return nil
 end
 Spirit.GetPortal = GetPortal
-
-local function GetEntries(target)
-    local best, bestDist = nil, 9e9
-    for _, p in ipairs(HomePoints) do
-        local d = Spirit.CaculateDistance(p, target)
-        if d < (Spirit.CaculateDistance(target) - 700) and d < bestDist then
-            bestDist = d
-            best = p
-        end
-    end
-end
-Spirit.GetEntries = GetEntries
 
 function Spirit.HoverOver(a, height)
     height = height or 35
@@ -179,9 +189,7 @@ function TweenController.Create(target)
         return
     end
 
-    -- Already tweening to ~same spot — don't cancel/restart.
-    -- Prevents the "walk a little then reset" loop when a task
-    -- re-issues the same destination every dispatcher tick.
+    -- Skip if we're already tweening to ~this same spot
     if Spirit.TweenInstance
        and Spirit.TweenInstance.PlaybackState == Enum.PlaybackState.Playing
        and Spirit.TweenDestination
@@ -237,7 +245,8 @@ function TweenController.Create(target)
         return
     end
 
-    local duration = dist / 160
+    -- 165 studs/sec = fast enough to reach fruits before they despawn
+    local duration = dist / 165
 
     Spirit.shouldTween = true
     Spirit.TweenDestination = destCF
