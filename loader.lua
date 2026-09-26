@@ -9,23 +9,41 @@ local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s"
 
 local TEAM = "Pirates"
 
--- gacha.lua is loaded immediately after core.lua so the boot roll
--- fires before any other task starts. MeleesController, LevelFarm,
--- etc. all load afterward and won't compete for the dispatcher
--- during the boot window.
+-- Load order:
+--   core → gacha (boot roll) → data/ui/tween/combat/quests/tasks
+--   → level_farm → player → level_gates → mele → side tasks
+--   → utility → sea → extras → main
 local MODULES = {
     "core.lua",
-    "gacha.lua",          -- ← boot roll first
-    "data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
-    "tasks.lua","level_farm.lua","player.lua","mele.lua",
-    "bosses.lua","sword_bosses.lua","cake_prince.lua","raids.lua",
-    "swords_quests.lua","race.lua","soul_guitar.lua","utility.lua",
-    "sea.lua","extras.lua","main.lua",
+    "gacha.lua",          -- boot roll fires first, before anything else
+    "data.lua",
+    "ui.lua",
+    "tween.lua",
+    "combat.lua",
+    "quests.lua",
+    "tasks.lua",
+    "level_farm.lua",
+    "player.lua",
+    "level_gates.lua",    -- Ken @ 300, Second Sea @ 700
+    "mele.lua",
+    "bosses.lua",
+    "sword_bosses.lua",
+    "cake_prince.lua",
+    "raids.lua",
+    "swords_quests.lua",
+    "race.lua",
+    "soul_guitar.lua",
+    "utility.lua",
+    "sea.lua",
+    "extras.lua",
+    "main.lua",
 }
 
 local env = getgenv()
 
+-- ═══════════════════════════════════════════════════════════════
 -- TEAM SELECT — CommF SetTeam loop, stops when character spawns.
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local lplayer = game:GetService("Players").LocalPlayer
     print("[EMS] selecting team — " .. TEAM)
