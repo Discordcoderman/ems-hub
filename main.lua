@@ -1,4 +1,4 @@
--- main.lua — startup side effects + main tick loop
+-- main.lua — startup side effects + main tick loop (no idle hop, no auto hop)
 local Spirit = getgenv().Spirit
 if not Spirit then error("[main] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[main] tasks.lua not loaded") end
@@ -12,6 +12,7 @@ local ScriptStorage = Spirit.ScriptStorage
 local SetTask       = Spirit.SetTask
 local SetText       = Spirit.SetText
 
+-- ── Notification listeners ──────────────────────────────────────
 local Notify = {Listeners = {}}
 Spirit.TorchEnabledTime = 0
 Spirit.DoneCdkTick = 0
@@ -46,8 +47,6 @@ RegisterNotify("quest completed", function()
         end
     end)
     Spirit.J:RefreshQuest()
-    task.wait()
-    if not Spirit.GetCurrentClaimQuest() then Spirit.J:MarkAsCompleted() end
 end)
 
 RegisterNotify("been spotted approaching", function()
@@ -72,7 +71,7 @@ pcall(function()
     end)
 end)
 
--- Quest safety net
+-- Quest safety net (unchanged — resets stale remote state)
 task.spawn(function()
     local emptyStreak = 0
     while task.wait(1) do
@@ -92,6 +91,7 @@ task.spawn(function()
     end
 end)
 
+-- ── FPS boost (unchanged) ───────────────────────────────────────
 local GRAYABLE = {
     BasePart = true, MeshPart = true, UnionOperation = true,
     Decal = true, Texture = true, ParticleEmitter = true,
@@ -132,11 +132,13 @@ if Spirit.Config and Spirit.Config.Configuration and Spirit.Config.Configuration
     end)
 end
 
+-- ── Idle kick prevention ────────────────────────────────────────
 LocalPlayer.Idled:Connect(function()
     Services.VirtualUser:CaptureController()
     Services.VirtualUser:ClickButton2(Vector2.new())
 end)
 
+-- ── Startup side effects ────────────────────────────────────────
 SetTask("MainTask", "Level Farming")
 SetTask("SubTask", "Idle")
 
@@ -156,6 +158,7 @@ end)
 
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
+-- Idle timer writer (feeds UI)
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -169,31 +172,12 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    local delay = (Spirit.Config and Spirit.Config.Configuration
-                   and Spirit.Config.Configuration.AutoHopDelay) or 3600
-    task.wait(delay)
-    if Spirit.Config and Spirit.Config.Configuration
-       and not Spirit.Config.Configuration.AutoHop then
-        Spirit.Hop()
-    end
-end)
-
+-- ── MAIN LOOP (idle-hop and auto-hop removed) ──────────────────
 SetText("MainTextLabel", "Loaded — waiting for player data...")
-Spirit.LastIdling = os.time()
 
 print("[Spirit] main.lua loaded — entering main loop")
 
 while task.wait() do
-    if Spirit.Config and Spirit.Config.Configuration
-       and Spirit.Config.Configuration.HopWhenIdle
-       and Spirit.LastIdling
-       and (os.time() - Spirit.LastIdling) > 300 then
-        SetTask("MainTask", "Rejoining — idle > 5 min")
-        task.wait(1)
-        game:GetService("TeleportService"):Teleport(game.PlaceId)
-    end
-
     if ScriptStorage.PlayerData.Level and ScriptStorage.PlayerData.Level > 0 then
         local ok, err = xpcall(Spirit.RefreshTasksData, debug.traceback)
         if not ok then
