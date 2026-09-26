@@ -1,4 +1,4 @@
--- level_farm.lua — LevelFarm with UW + Sky teleport routing
+-- level_farm.lua — LevelFarm with UW routing + tween-only sky travel
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -9,71 +9,6 @@ local ReplicatedStorage = Services.ReplicatedStorage
 local LocalPlayer       = Spirit.LocalPlayer
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
-
--- ═══════════════════════════════════════════════════════════════
--- SKY ROUTING
--- Upper sky: Y >= 3000. Lower sky: 200 <= Y < 3000. Ground: Y < 200.
--- requestEntrance does a server-side teleport — no tween. The
--- SkyTransitionActive flag holds the dispatcher + attack loop while
--- the server moves us, and cancels any in-flight tween on the block.
--- ═══════════════════════════════════════════════════════════════
-local SKY_UPPER_ENTRY = Vector3.new(-6023.57666015625, 5469.7197265625, 2203.308349609375)
-local SKY_LOWER_ENTRY = Vector3.new(-4166.60986328125, 1093.697998046875, -347.16226196289062)
-local SKY_TRIGGER_COOLDOWN = 5
-local SKY_HOLD_TIME        = 3
-
-local skyState = {lastTrigger = 0}
-
-local function skyZoneOf(pos)
-    if not pos then return "ground" end
-    if pos.Y >= 3000 then return "upper" end
-    if pos.Y >= 200  then return "lower" end
-    return "ground"
-end
-
-local function ensureSkyPath(destCF)
-    local hrp = Spirit.HumanoidRootPart
-    if not hrp then return false end
-
-    local destZone   = skyZoneOf(destCF and destCF.Position)
-    local playerZone = skyZoneOf(hrp.Position)
-
-    if destZone == playerZone then return false end
-
-    local entry
-    if destZone == "upper" and playerZone ~= "upper" then
-        entry = SKY_UPPER_ENTRY
-    elseif playerZone == "upper" and destZone ~= "upper" then
-        entry = SKY_LOWER_ENTRY
-    else
-        return false
-    end
-
-    if tick() - skyState.lastTrigger < SKY_TRIGGER_COOLDOWN then
-        return true
-    end
-    skyState.lastTrigger = tick()
-
-    _G.SkyTransitionActive = true
-
-    if Spirit.TweenInstance then
-        pcall(function() Spirit.TweenInstance:Cancel() end)
-    end
-    Spirit.shouldTween = false
-
-    Spirit.SetTask("MainTask", "Level Farm | Sky teleport — "
-        .. (entry == SKY_UPPER_ENTRY and "Upper" or "Lower"))
-
-    pcall(function()
-        Remotes.CommF_:InvokeServer("requestEntrance", entry)
-    end)
-
-    task.delay(SKY_HOLD_TIME, function()
-        _G.SkyTransitionActive = false
-    end)
-
-    return true
-end
 
 -- ═══════════════════════════════════════════════════════════════
 -- UNDERWATER CITY ROUTING
@@ -199,7 +134,9 @@ local function ensureUnderwaterPath(destCF)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- ManualLevelLookup
+-- ManualLevelLookup — mob / quest / CFrame per level tier
+-- Sky tiers use tween (no requestEntrance) with corrected quest
+-- giver coordinates.
 -- ═══════════════════════════════════════════════════════════════
 local function ManualLevelLookup()
     local lv = ScriptStorage.PlayerData.Level or 0
@@ -280,20 +217,24 @@ local function ManualLevelLookup()
             PosQ=CFrame.new(61405.594, 24.995, 1630.361)
             PosM=CFrame.new(61922.6328125, 18.482830047607422, 1493.934326171875)
         elseif lv >= 450 and lv <= 474 then
+            -- God's Guard — SkyExp1Quest Q1. Corrected quest giver.
             Mon="God's Guard"; Qdata=1; Qname="SkyExp1Quest"; NameMon="God's Guard"
-            PosQ=CFrame.new(-5950.231, 5469.248, 2087.185)
+            PosQ=CFrame.new(-4314.29, 1087.13, -559.59)
             PosM=CFrame.new(-4710.04296875, 845.2769775390625, -1927.3079833984375)
         elseif lv >= 475 and lv <= 524 then
+            -- Shanda — SkyExp1Quest Q2. Corrected quest giver.
             Mon="Shanda"; Qdata=2; Qname="SkyExp1Quest"; NameMon="Shanda"
-            PosQ=CFrame.new(-5950.231, 5469.248, 2087.185)
+            PosQ=CFrame.new(-5950.65, 5469.16, 2088.56)
             PosM=CFrame.new(-7678.48974609375, 5566.40380859375, -497.2156066894531)
         elseif lv >= 525 and lv <= 549 then
+            -- Royal Squad — SkyExp2Quest Q1. Corrected quest giver.
             Mon="Royal Squad"; Qdata=1; Qname="SkyExp2Quest"; NameMon="Royal Squad"
-            PosQ=CFrame.new(-5950.231, 5469.248, 2087.185)
+            PosQ=CFrame.new(-7027.94, 5591.90, 1355.00)
             PosM=CFrame.new(-7624.25244140625, 5658.13330078125, -1467.354248046875)
         elseif lv >= 550 and lv <= 624 then
+            -- Royal Soldier — SkyExp2Quest Q2. Same quest giver as Royal Squad.
             Mon="Royal Soldier"; Qdata=2; Qname="SkyExp2Quest"; NameMon="Royal Soldier"
-            PosQ=CFrame.new(-5950.231, 5469.248, 2087.185)
+            PosQ=CFrame.new(-7027.94, 5591.90, 1355.00)
             PosM=CFrame.new(-7836.75341796875, 5645.6640625, -1790.6236572265625)
         elseif lv >= 625 and lv <= 649 then
             Mon="Galley Pirate"; Qdata=1; Qname="FountainQuest"; NameMon="Galley Pirate"
@@ -685,10 +626,8 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- SKY ROUTING — runs first. requestEntrance for sky transitions.
-    if Q.PosQ and ensureSkyPath(Q.PosQ) then return end
-
-    -- UW ROUTING — for the underwater city boundary.
+    -- UW ROUTING only. Sky travel is tween-only now — the character
+    -- walks the 58k stud gap at 180 studs/sec through the sky islands.
     if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
 
     local now = os.time()
