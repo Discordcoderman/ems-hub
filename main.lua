@@ -1,5 +1,6 @@
 -- main.lua
 -- Startup side effects + main tick loop. Loads LAST.
+-- Depends on: every task module having already registered its Refresh/Start.
 
 local Spirit = getgenv().Spirit
 if not Spirit then error("[main] core.lua not loaded") end
@@ -43,11 +44,20 @@ RegisterNotify("elite", function()
             Remotes.CommF_:InvokeServer("EliteHunter", "Progress"))
     end
 end)
+
 RegisterNotify("quest completed", function()
+    -- Reset the remote-driven state so level_farm doesn't think the old
+    -- quest is still active if it's reading GetActiveQuestName() as a fallback.
+    pcall(function()
+        if Spirit.QuestController and Spirit.QuestController.Reset then
+            Spirit.QuestController:Reset()
+        end
+    end)
     Spirit.J:RefreshQuest()
     task.wait()
     if not Spirit.GetCurrentClaimQuest() then Spirit.J:MarkAsCompleted() end
 end)
+
 RegisterNotify("been spotted approaching", function()
     if Spirit.FunctionsHandler.PirateRaid then
         Spirit.FunctionsHandler.PirateRaid:Set("Senque", os.time())
@@ -59,6 +69,7 @@ RegisterNotify("job", function()
     end
 end)
 
+-- capability-safe hook — delete this whole block if your executor rejects hookfunction
 pcall(function()
     local orig = require(ReplicatedStorage.Notification).new
     local hooked
@@ -68,6 +79,31 @@ pcall(function()
         end)
         return hooked(a, b)
     end)
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- QUEST SAFETY NET
+-- If the GUI has no active quest for 5 straight seconds but
+-- QuestController still claims there is one, force a reset so
+-- LevelFarm can accept a fresh quest.
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    local emptyStreak = 0
+    while task.wait(1) do
+        local mob = nil
+        pcall(function() mob = Spirit.GetCurrentClaimQuest() end)
+        if mob then
+            emptyStreak = 0
+        else
+            emptyStreak = emptyStreak + 1
+            if emptyStreak >= 5
+               and Spirit.QuestController
+               and Spirit.QuestController.CurrentQuest ~= "" then
+                pcall(function() Spirit.QuestController:Reset() end)
+                emptyStreak = 0
+            end
+        end
+    end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
@@ -122,10 +158,6 @@ LocalPlayer.Idled:Connect(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- STORAGE AUTOSAVE (already managed by core.lua, kept light)
--- ═══════════════════════════════════════════════════════════════
-
--- ═══════════════════════════════════════════════════════════════
 -- STARTUP SIDE EFFECTS
 -- ═══════════════════════════════════════════════════════════════
 SetTask("MainTask", "Level Farming")
@@ -147,7 +179,7 @@ end)
 
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
--- Idle timer writer
+-- Idle timer writer (feeds UI's UPTIME row)
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -181,6 +213,7 @@ Spirit.LastIdling = os.time()
 print("[Spirit] main.lua loaded — entering main loop")
 
 while task.wait() do
+    -- Idle-hop check
     if Spirit.Config and Spirit.Config.Configuration
        and Spirit.Config.Configuration.HopWhenIdle
        and Spirit.LastIdling
@@ -190,6 +223,7 @@ while task.wait() do
         game:GetService("TeleportService"):Teleport(game.PlaceId)
     end
 
+    -- Feed the dispatcher once PlayerData.Level is populated
     if ScriptStorage.PlayerData.Level and ScriptStorage.PlayerData.Level > 0 then
         local ok, err = xpcall(Spirit.RefreshTasksData, debug.traceback)
         if not ok then
