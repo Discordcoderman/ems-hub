@@ -35,10 +35,6 @@ end
 if LocalPlayer.Character then bindCharacter(LocalPlayer.Character) end
 LocalPlayer.CharacterAdded:Connect(bindCharacter)
 
--- NOTE: no blocking wait for HumanoidRootPart. On a fresh server the
--- character isn't spawned until after the Pick-A-Side team screen is
--- dismissed. Blocking here would halt the entire loader.
-
 local function ConvertTo(_, v) return Vector3.new(v.X, v.Y, v.Z) end
 Spirit.ConvertTo = ConvertTo
 
@@ -404,8 +400,6 @@ local function RegisterLocalPlayerEventsConnection()
         pcall(function() c:Disconnect() end)
     end
 
-    -- Character may not exist yet (still on team select screen). Hook up
-    -- via CharacterAdded without blocking the loader.
     if not Spirit.Character then
         local conn
         conn = LocalPlayer.CharacterAdded:Connect(function()
@@ -452,113 +446,7 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- TEAM SET — click the Pirates frame on the Pick-A-Side GUI
--- Exact path: PlayerGui.Main.ChooseTeam.Container.Pirates
--- ═══════════════════════════════════════════════════════════════
-local function getCurrentTeam()
-    local p = LocalPlayer
-    local ok, tm = pcall(function() return p.Team end)
-    if ok and tm then
-        if typeof(tm) == "Instance" then return tm.Name end
-        return tostring(tm)
-    end
-    return nil
-end
-
-local function findPiratesFrame()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return nil end
-
-    local main = pg:FindFirstChild("Main")
-    if main then
-        local chooseTeam = main:FindFirstChild("ChooseTeam")
-        if chooseTeam then
-            local container = chooseTeam:FindFirstChild("Container")
-            if container then
-                local pirates = container:FindFirstChild("Pirates")
-                if pirates then return pirates end
-            end
-        end
-    end
-
-    for _, gui in ipairs(pg:GetDescendants()) do
-        if gui.Name == "Pirates"
-           and (gui:IsA("TextButton") or gui:IsA("ImageButton")
-                or gui:IsA("Frame") or gui:IsA("GuiObject")) then
-            return gui
-        end
-    end
-    return nil
-end
-
-local function clickAtCenter(obj)
-    if not obj then return false end
-    local ap = obj.AbsolutePosition
-    local as = obj.AbsoluteSize
-    local cx = ap.X + (as.X / 2)
-    local cy = ap.Y + (as.Y / 2)
-    if cx ~= cx or cy ~= cy then return false end
-
-    local ok = pcall(function()
-        local VIM = game:GetService("VirtualInputManager")
-        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-        task.wait(0.1)
-        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-        task.wait(0.12)
-        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-        task.wait(0.1)
-        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-    end)
-    if ok then return true end
-
-    if typeof(firesignal) == "function" then
-        if pcall(firesignal, obj.MouseButton1Click) then return true end
-    end
-    if pcall(function() obj:Activate() end) then return true end
-    return false
-end
-
-local function setPirateTeam()
-    local team = getCurrentTeam()
-    if team and string.lower(team) == "pirates" then
-        print("[team] already on Pirates")
-        return
-    end
-
-    print("[team] waiting for Pick-A-Side GUI…")
-
-    for attempt = 1, 60 do
-        local cur = getCurrentTeam()
-        if cur and string.lower(cur) == "pirates" then
-            print("[team] joined Pirates")
-            Spirit.SetTask("SubTask", "Team: Pirates")
-            return
-        end
-
-        local frame = findPiratesFrame()
-        if frame then
-            local cx = frame.AbsolutePosition.X + frame.AbsoluteSize.X / 2
-            local cy = frame.AbsolutePosition.Y + frame.AbsoluteSize.Y / 2
-            print(("[team] attempt %d — clicking %s at (%d,%d)")
-                :format(attempt, frame:GetFullName(), cx, cy))
-            clickAtCenter(frame)
-        elseif attempt % 10 == 0 then
-            print("[team] Pick-A-Side GUI not found yet (attempt " .. attempt .. ")")
-        end
-
-        task.wait(0.5)
-    end
-
-    print("[team] done — current team: " .. tostring(getCurrentTeam()))
-    Spirit.SetTask("SubTask", "Team: " .. tostring(getCurrentTeam() or "?"))
-end
-
-task.spawn(setPirateTeam)
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    task.spawn(setPirateTeam)
-end)
+-- NOTE: Team selection is handled in loader.lua, not here.
 
 task.spawn(function()
     pcall(function()
