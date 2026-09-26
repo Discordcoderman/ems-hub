@@ -1,4 +1,4 @@
--- ui.lua — EMS HUB purple theme, no toggles, item dot indicators
+-- ui.lua — EMS HUB purple theme; Melee label = current training progress
 local Spirit = getgenv().Spirit
 if not Spirit then error("[ui] core.lua not loaded") end
 
@@ -140,7 +140,6 @@ colLayout.FillDirection = Enum.FillDirection.Horizontal
 colLayout.Padding = UDim.new(0, 12)
 colLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
--- Left column: Account Stats
 local leftCol = Instance.new("Frame")
 leftCol.Parent = columns
 leftCol.LayoutOrder = 1
@@ -198,6 +197,7 @@ local function makeStatRow(label, order)
     valLbl.TextSize = 13
     valLbl.TextColor3 = C.text
     valLbl.TextXAlignment = Enum.TextXAlignment.Left
+    valLbl.TextTruncate = Enum.TextTruncate.AtEnd
     return valLbl
 end
 
@@ -205,10 +205,9 @@ EmsUI.LevelLabel = makeStatRow("LEVEL", 1)
 EmsUI.RaceLabel  = makeStatRow("RACE", 2)
 EmsUI.BeliLabel  = makeStatRow("BELI", 3)
 EmsUI.FragLabel  = makeStatRow("FRAGMENTS", 4)
-EmsUI.MeleeLabel = makeStatRow("MELEE MASTERY", 5)
+EmsUI.MeleeLabel = makeStatRow("TRAINING", 5)
 EmsUI.TimerLabel = makeStatRow("UPTIME", 6)
 
--- Right column: Account Items
 local rightCol = Instance.new("Frame")
 rightCol.Parent = columns
 rightCol.LayoutOrder = 2
@@ -354,8 +353,6 @@ task.spawn(function()
                     subStatusText.Text = text
                 elseif key == "LiveTime" then
                     EmsUI.TimerLabel.Text = text
-                elseif key == "Melees" then
-                    EmsUI.MeleeLabel.Text = text
                 end
             end)
         end
@@ -392,6 +389,7 @@ function EmsUI.SetStats(data)
     end)
 end
 
+-- Item ownership dots
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
@@ -413,15 +411,18 @@ task.spawn(function()
     end
 end)
 
+-- Live stats + training melee tracker
 task.spawn(function()
     local start = os.time() - (Spirit.OldSessionTime or 0)
     while task.wait(1) do
         pcall(function()
             local Data = LocalPlayer:FindFirstChild("Data")
             if not Data then return end
+
             local level = Data:FindFirstChild("Level") and Data.Level.Value or 0
             local beli  = Data:FindFirstChild("Beli")  and Data.Beli.Value  or 0
             local frag  = Data:FindFirstChild("Fragments") and Data.Fragments.Value or 0
+
             local raceName = "Unknown"
             local raceObj = Data:FindFirstChild("Race")
             if raceObj then
@@ -431,15 +432,22 @@ task.spawn(function()
                     if v then raceName = v.Value end
                 end
             end
-            local melee = 0
-            local sf = Data:FindFirstChild("Stats")
-            if sf and sf:FindFirstChild("Melee") then
-                local m = sf.Melee
-                melee = m:FindFirstChild("Level") and m.Level.Value or m.Value or 0
+
+            -- Show the currently-training melee's mastery (first in order under target)
+            local meleeStr = "—"
+            for _, mm in ipairs(Spirit.MASTERY_TRAIN_ORDER or {}) do
+                local mst = Spirit.ScriptStorage.Melees[mm.name]
+                if mst ~= nil then
+                    if mst < mm.target then
+                        meleeStr = mm.name .. " " .. mst .. "/" .. mm.target
+                        break
+                    end
+                end
             end
+
             EmsUI.SetStats({
                 Level = level, Beli = beli, Fragments = frag,
-                Race = raceName, Melee = melee,
+                Race = raceName, Melee = meleeStr,
                 Elapsed = os.time() - start,
             })
         end)
