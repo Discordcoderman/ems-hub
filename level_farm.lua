@@ -1,15 +1,138 @@
--- level_farm.lua — LevelFarm task
+-- level_farm.lua — LevelFarm task + Prisoner escape override
+-- Normal path: walks ManualLevelLookup and farms the mob tier for the
+-- player's current level. Prison island at level 190+ runs a special
+-- Escape from Alcatraz sequence first — provokes Raft / Puncher /
+-- Digger via BonusMomentsRemoteFunction, kills the three, then
+-- releases the dispatcher back to normal farming.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
 
-local Services      = Spirit.Services
-local Workspace     = Spirit.Workspace
+local Services          = Spirit.Services
+local Workspace         = Spirit.Workspace
 local ReplicatedStorage = Services.ReplicatedStorage
-local LocalPlayer   = Spirit.LocalPlayer
-local ScriptStorage = Spirit.ScriptStorage
-local Remotes       = Spirit.Remotes
+local LocalPlayer       = Spirit.LocalPlayer
+local ScriptStorage     = Spirit.ScriptStorage
+local Remotes           = Spirit.Remotes
 
+-- ═══════════════════════════════════════════════════════════════
+-- PRISONER ESCAPE — Escape from Alcatraz
+-- Triggers when level >= 190 and the character is inside the Prison
+-- island. State machine survives dispatcher ticks:
+--   idle → provoke → wait → kill → idle (released)
+-- Leaving the zone resets. Re-entering re-arms.
+-- ═══════════════════════════════════════════════════════════════
+local PRISON_ANCHOR  = Vector3.new(5207, 20, 738)
+local PRISON_RADIUS  = 500
+local PRISON_TARGETS = {"Raft", "Puncher", "Digger"}
+local PRISON_LEVEL   = 190
+local SPAWN_TIMEOUT  = 25
+local RETRY_COOLDOWN = 30
+
+local prison = {
+    phase     = "idle",
+    firedAt   = 0,
+    lastRetry = 0,
+    sawSpawn  = false,
+}
+
+local function prisonReset()
+    prison.phase     = "idle"
+    prison.firedAt   = 0
+    prison.lastRetry = 0
+    prison.sawSpawn  = false
+end
+
+local function inPrisonZone()
+    local hrp = Spirit.HumanoidRootPart
+    if not hrp then return false end
+    return (hrp.Position - PRISON_ANCHOR).Magnitude < PRISON_RADIUS
+end
+
+local function alivePrisonNPCs()
+    local alive = {}
+    for _, name in ipairs(PRISON_TARGETS) do
+        local npc = Workspace.Enemies:FindFirstChild(name)
+        if npc and npc:FindFirstChild("Humanoid") and npc.Humanoid.Health > 0 then
+            table.insert(alive, name)
+        end
+    end
+    return alive
+end
+
+local function firePrisonProvokes()
+    local rf = ReplicatedStorage.Remotes:FindFirstChild("BonusMomentsRemoteFunction")
+    if not rf then
+        Spirit.Report("[prison] BonusMomentsRemoteFunction missing")
+        prisonReset()
+        return false
+    end
+    for _, target in ipairs(PRISON_TARGETS) do
+        pcall(function()
+            rf:InvokeServer("Escape from Alcatraz", "Provoke", target)
+        end)
+        task.wait(0.4)
+    end
+    print("[prison] fired Escape from Alcatraz — all three provokes")
+    return true
+end
+
+-- Returns an action table when the prison branch owns the tick,
+-- nil otherwise. Called from Refresh before the normal farm path.
+local function prisonTick()
+    local lvl = ScriptStorage.PlayerData.Level or 0
+    if lvl < PRISON_LEVEL then
+        if prison.phase ~= "idle" then prisonReset() end
+        return nil
+    end
+
+    if not inPrisonZone() then
+        if prison.phase ~= "idle" then prisonReset() end
+        return nil
+    end
+
+    local alive = alivePrisonNPCs()
+
+    if #alive > 0 then
+        prison.phase    = "kill"
+        prison.sawSpawn = true
+        return {kind = "prison", action = "kill", target = alive[1]}
+    end
+
+    if prison.phase == "kill" and prison.sawSpawn then
+        print("[prison] escape complete — all three down")
+        prisonReset()
+        return nil
+    end
+
+    if prison.phase == "idle" then
+        prison.phase = "provoke"
+    end
+
+    if prison.phase == "provoke" then
+        if firePrisonProvokes() then
+            prison.firedAt = tick()
+            prison.phase   = "wait"
+        end
+        return {kind = "prison", action = "fired"}
+    end
+
+    if prison.phase == "wait" then
+        if tick() - prison.firedAt > SPAWN_TIMEOUT then
+            if tick() - prison.lastRetry > RETRY_COOLDOWN then
+                prison.lastRetry = tick()
+                prison.phase     = "provoke"
+            end
+        end
+        return {kind = "prison", action = "waiting"}
+    end
+
+    return nil
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- ManualLevelLookup — mob / quest / CFrame per level tier
+-- ═══════════════════════════════════════════════════════════════
 local function ManualLevelLookup()
     local lv = ScriptStorage.PlayerData.Level or 0
     local Mon, Qdata, Qname, NameMon = "", 0, "", ""
@@ -414,9 +537,6 @@ local function mobMatches(guiMob, targetMob)
     return false
 end
 
--- Click the dialog option whose text contains the target mob name.
--- Blox Fruits NPCs with two quest tiers show a popup; the remote
--- alone doesn't register the quest until the option is clicked.
 local function clickQuestDialog(targetMob)
     if os.time() - LastDialogClick < 2 then return false end
 
@@ -475,10 +595,30 @@ end
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
+
+    -- Prisoner escape owns the tick when active. Returns a table
+    -- (action), which Start dispatches. When idle, falls through.
+    local prisonAction = prisonTick()
+    if prisonAction then return prisonAction end
+
     return 4
 end)
 
 LF:RegisterMethod("Start", function(step)
+    -- ── PRISON BRANCH ──
+    if type(step) == "table" and step.kind == "prison" then
+        if step.action == "kill" and step.target then
+            Spirit.SetTask("MainTask", "Prison | Killing " .. step.target)
+            Spirit.CombatController.Attack(step.target)
+        elseif step.action == "fired" then
+            Spirit.SetTask("MainTask", "Prison | Provoked — waiting for spawns")
+        elseif step.action == "waiting" then
+            Spirit.SetTask("MainTask", "Prison | Waiting for Raft / Puncher / Digger")
+        end
+        return
+    end
+
+    -- ── NORMAL FARMING ──
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
