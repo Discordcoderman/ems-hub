@@ -1,4 +1,4 @@
--- quests.lua — quest system, GUI text + remote event driven
+-- quests.lua — quest system
 local Spirit = getgenv().Spirit
 if not Spirit then error("[quests] core.lua not loaded") end
 
@@ -99,25 +99,71 @@ function J.StartQuest(_self, questId, questIndex)
     return Remotes.CommF_:InvokeServer("StartQuest", questId, questIndex)
 end
 
--- Robust GUI mob-name extraction. Handles "(Lv. X)", "[Lv. X]", and no-suffix.
-function J.GetCurrentClaimQuest(_self)
-    local main = LocalPlayer:FindFirstChild("PlayerGui")
-                and LocalPlayer.PlayerGui:FindFirstChild("Main")
-    local questFrame = main and main:FindFirstChild("Quest")
-    if not questFrame or not questFrame.Visible then return nil, nil end
-    local container = questFrame:FindFirstChild("Container")
-    local titleBox = container
-                 and container:FindFirstChild("QuestTitle")
-                 and container.QuestTitle:FindFirstChild("Title")
-    if not titleBox then return nil, nil end
-
-    local text = tostring(titleBox.Text)
+-- ═══════════════════════════════════════════════════════════════
+-- GetCurrentClaimQuest — scan every TextLabel under PlayerGui.Main
+-- for a "Defeat N MobName" pattern. Works regardless of which
+-- container the quest UI happens to live in.
+-- ═══════════════════════════════════════════════════════════════
+local function parseQuestText(text)
+    -- Try "(Lv. X)" or "[Lv. X]" suffix
     local mob = text:match("Defeat%s+%d+%s+(.-)%s*[%(%[]")
-    if not mob then mob = text:match("Defeat%s+%d+%s+(.+)$") end
-    if not mob or mob == "" then mob = text end
+    -- Then plain end-of-string
+    if not mob then
+        mob = text:match("Defeat%s+%d+%s+(.+)$")
+    end
+    if not mob or mob == "" then return nil end
     mob = mob:gsub("%s+$", "")
     mob = mob:gsub("Military ", "Mil. ")
-    return mob, text
+    return mob
+end
+
+function J.GetCurrentClaimQuest(_self)
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local main = pg:FindFirstChild("Main")
+    if not main then return nil, nil end
+
+    -- 1. Fast path: known standard container
+    local standardFrame = main:FindFirstChild("Quest")
+    if standardFrame and standardFrame.Visible then
+        local container = standardFrame:FindFirstChild("Container")
+        local titleBox  = container
+                      and container:FindFirstChild("QuestTitle")
+                      and container.QuestTitle:FindFirstChild("Title")
+        if titleBox and titleBox.Text and titleBox.Text ~= "" then
+            local mob = parseQuestText(tostring(titleBox.Text))
+            if mob then return mob, tostring(titleBox.Text) end
+        end
+    end
+
+    -- 2. Recursive scan: any visible TextLabel containing "Defeat"
+    for _, obj in ipairs(main:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
+            local text = tostring(obj.Text)
+            if text:find("Defeat", 1, true) then
+                local mob = parseQuestText(text)
+                if mob then return mob, text end
+            end
+        end
+    end
+
+    -- 3. Also scan a few common alternate roots
+    for _, altName in ipairs({"QuestHolder", "QuestTracker", "Quests", "QuestProgress"}) do
+        local alt = main:FindFirstChild(altName)
+        if alt then
+            for _, obj in ipairs(alt:GetDescendants()) do
+                if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
+                    local text = tostring(obj.Text)
+                    if text:find("Defeat", 1, true) then
+                        local mob = parseQuestText(text)
+                        if mob then return mob, text end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, nil
 end
 
 Spirit.GetCurrentClaimQuest = function()
