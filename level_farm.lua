@@ -1,4 +1,4 @@
--- level_farm.lua — LevelFarm task (prison escape handled by prison_escape.lua)
+-- level_farm.lua — LevelFarm task (no prison, Dark Master extends 175–249)
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -10,6 +10,11 @@ local LocalPlayer   = Spirit.LocalPlayer
 local ScriptStorage = Spirit.ScriptStorage
 local Remotes       = Spirit.Remotes
 
+-- ═══════════════════════════════════════════════════════════════
+-- ManualLevelLookup — mob / quest / CFrame per level tier
+-- Sea 1: 175–249 collapses to Dark Master (Skylands). Prisoner
+--        tiers are skipped entirely — no prison farming.
+-- ═══════════════════════════════════════════════════════════════
 local function ManualLevelLookup()
     local lv = ScriptStorage.PlayerData.Level or 0
     local Mon, Qdata, Qname, NameMon = "", 0, "", ""
@@ -60,18 +65,11 @@ local function ManualLevelLookup()
             Mon="Sky Bandit"; Qdata=1; Qname="SkyQuest"; NameMon="Sky Bandit"
             PosQ=CFrame.new(-5404.493, 410.791, -693.521)
             PosM=CFrame.new(-4953.20703125, 295.74420166015625, -2899.22900390625)
-        elseif lv >= 175 and lv <= 189 then
+        elseif lv >= 175 and lv <= 249 then
+            -- Dark Master covers 175 through 249. Prison island skipped.
             Mon="Dark Master"; Qdata=2; Qname="SkyQuest"; NameMon="Dark Master"
             PosQ=CFrame.new(-5404.493, 410.791, -693.521)
             PosM=CFrame.new(-5259.8447265625, 391.3976745605469, -2229.035400390625)
-        elseif lv >= 190 and lv <= 209 then
-            Mon="Prisoner"; Qdata=1; Qname="PrisonerQuest"; NameMon="Prisoner"
-            PosQ=CFrame.new(5206.993, 19.613, 738.177)
-            PosM=CFrame.new(5098.9736328125, -0.3204058110713959, 474.2373352050781)
-        elseif lv >= 210 and lv <= 249 then
-            Mon="Dangerous Prisoner"; Qdata=2; Qname="PrisonerQuest"; NameMon="Dangerous Prisoner"
-            PosQ=CFrame.new(5206.993, 19.613, 738.177)
-            PosM=CFrame.new(5654.5634765625, 15.633401870727539, 866.2991943359375)
         elseif lv >= 250 and lv <= 274 then
             Mon="Toga Warrior"; Qdata=1; Qname="ColosseumQuest"; NameMon="Toga Warrior"
             PosQ=CFrame.new(-1343.188, 13.535, -2927.292)
@@ -390,6 +388,9 @@ local function ManualLevelLookup()
 end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
+-- ═══════════════════════════════════════════════════════════════
+-- LevelFarm
+-- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 
@@ -439,7 +440,7 @@ local function clickQuestDialog(targetMob)
                     end
 
                     local pos = obj.AbsolutePosition + obj.AbsoluteSize / 2
-                                         pcall(function()
+                    pcall(function()
                         local VIM = game:GetService("VirtualInputManager")
                         VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
                         task.wait(0.06)
