@@ -391,12 +391,11 @@ end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
 -- ═══════════════════════════════════════════════════════════════
--- LevelFarm — fire the StartQuest remote periodically and just kill
+-- LevelFarm
 -- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 local LastStartQuest = 0
-local CurrentQuest = nil
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
@@ -411,6 +410,7 @@ LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
+    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -426,6 +426,7 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
+    -- Shanda / God's Guard shortcut path
     if step == 2 or step == 3 then
         local mobName = (step == 2) and "Shanda" or "God's Guard"
         local skyCF = (step == 2) and CFrame.new(-7894, 5547, -380) or CFrame.new(-4650, 872, -1775)
@@ -438,22 +439,7 @@ LF:RegisterMethod("Start", function(step)
             end
         end
         Spirit.SetTask("MainTask", "Level Farm | " .. mobName .. " | Skylands")
-        for _, folder in ipairs({Workspace.Enemies, ReplicatedStorage}) do
-            for _, v in ipairs(folder:GetChildren()) do
-                if v.Name == mobName and v:IsA("Model") then
-                    local hum = v:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then
-                        Spirit.CombatController.Attack(mobName)
-                        return
-                    end
-                end
-            end
-        end
-        local spawnFolder = ReplicatedStorage:FindFirstChild("FortBuilderReplicatedSpawnPositionsFolder")
-        local anchor = spawnFolder and spawnFolder:FindFirstChild(mobName)
-        if anchor then
-            Spirit.TweenController.Create(anchor:GetPivot() + Vector3.new(0, 25, 0))
-        end
+        Spirit.CombatController.Attack(mobName)
         return
     end
 
@@ -463,32 +449,29 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    if CurrentQuest ~= Q.Qname then
-        CurrentQuest = Q.Qname
-        LastStartQuest = 0
-    end
+    -- Quest state — check remote controller first
+    local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
+    local onCorrectQuest = (remoteQuest == Q.Qname)
 
-    -- Walk to the NPC if we're not close enough
-    if Q.PosQ then
-        local distToNPC = Spirit.CaculateDistance(Q.PosQ)
-        if distToNPC > 15 then
-            Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " giver (" .. math.floor(distToNPC) .. ")")
-            Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-            return
+    if not onCorrectQuest then
+        local now = os.time()
+        if now - LastStartQuest > 30 then
+            LastStartQuest = now
+            if Q.PosQ then
+                local dist = Spirit.CaculateDistance(Q.PosQ)
+                if dist > 15 then
+                    Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
+                else
+                    pcall(function()
+                        Remotes.CommF_:InvokeServer("StartQuest", Q.Qname, Q.Qdata)
+                    end)
+                    print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
+                end
+            end
         end
     end
 
-    -- Fire StartQuest remote once every 30s
-    local now = os.time()
-    if now - LastStartQuest > 30 then
-        LastStartQuest = now
-        pcall(function()
-            Remotes.CommF_:InvokeServer("StartQuest", Q.Qname, Q.Qdata)
-        end)
-        print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
-    end
-
-    -- Kill mobs unconditionally
+    -- ═══ ALWAYS attack — never wait for registration ═══
     Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
     Spirit.CombatController.Attack(Q.Mon)
 end)
