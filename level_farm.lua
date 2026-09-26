@@ -396,6 +396,7 @@ Spirit.ManualLevelLookup = ManualLevelLookup
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 local LastStartQuest = 0
+local LastAbandon = 0
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
@@ -410,6 +411,7 @@ LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
+    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -425,6 +427,7 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
+    -- Shanda / God's Guard shortcut path
     if step == 2 or step == 3 then
         local mobName = (step == 2) and "Shanda" or "God's Guard"
         local skyCF = (step == 2) and CFrame.new(-7894, 5547, -380) or CFrame.new(-4650, 872, -1775)
@@ -447,38 +450,66 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- ─── Check whether we already have the correct quest ────────
+    -- ─── Case 1: QuestController confirms correct quest → attack ──
     local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
-    local onCorrectQuest = (remoteQuest == Q.Qname)
-
-    if onCorrectQuest then
+    if remoteQuest == Q.Qname then
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
         Spirit.CombatController.Attack(Q.Mon)
         return
     end
 
-    -- ─── No correct quest. Walk to the giver first ──────────────
+    -- ─── Case 2: QuestController says wrong quest is active → abandon ─
+    if remoteQuest ~= "" then
+        local now = os.time()
+        if now - LastAbandon > 3 then
+            LastAbandon = now
+            print("[LF] abandoning wrong quest (remote):", tostring(remoteQuest))
+            Spirit.J.AbandonQuest(Spirit.J)
+        end
+        Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(remoteQuest))
+        return
+    end
+
+    -- ─── Case 3: remote silent. Try GUI fallback ──────────────────
+    local guiMob = Spirit.GetCurrentClaimQuest()
+    if guiMob then
+        local matches = (guiMob == Q.NameMon) or (guiMob == Q.NameMon .. "s")
+        if matches then
+            Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
+            Spirit.CombatController.Attack(Q.Mon)
+            return
+        else
+            local now = os.time()
+            if now - LastAbandon > 3 then
+                LastAbandon = now
+                print("[LF] abandoning wrong quest (gui):", tostring(guiMob))
+                Spirit.J.AbandonQuest(Spirit.J)
+            end
+            Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(guiMob))
+            return
+        end
+    end
+
+    -- ─── Case 4: no quest active. Walk to NPC and accept ─────────
     if not Q.PosQ then return end
     local dist = Spirit.CaculateDistance(Q.PosQ)
 
     if dist > 15 then
         Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " giver (" .. math.floor(dist) .. ")")
         Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-        return   -- do NOT attack yet, we need to reach the NPC
+        return
     end
 
-    -- ─── At the NPC. Fire StartQuest on a 5s cooldown ───────────
+    -- At the NPC. Fire StartQuest on a 5s cooldown, log the response.
     local now = os.time()
     if now - LastStartQuest > 5 then
         LastStartQuest = now
-        pcall(function()
-            Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+        local ok, res = pcall(function()
+            return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
         end)
-        print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
+        print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
+            tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
     end
-
-    -- Wait at the NPC until quest registers. Don't attack yet —
-    -- otherwise the NPC tween gets cancelled and we never accept.
     Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accepting quest")
 end)
 
