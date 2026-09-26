@@ -1,10 +1,12 @@
--- player.lua
+-- player.lua — LocalPlayerController + ability buyer (Geppo, Buso, Ken, Soru)
 local Spirit = getgenv().Spirit
 if not Spirit then error("[player] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[player] tasks.lua not loaded") end
 
 local LocalPlayer   = Spirit.LocalPlayer
+local Remotes       = Spirit.Remotes
 local ScriptStorage = Spirit.ScriptStorage
+local SetTask       = Spirit.SetTask
 
 local LPC = Spirit.FunctionsHandler.LocalPlayerController
 
@@ -13,19 +15,18 @@ LPC:RegisterMethod("EquipTool", function(toolName)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
+    -- Already equipped?
+    for _, v in ipairs(char:GetChildren()) do
+        if v:IsA("Tool") and (v.Name == tostring(toolName) or v.ToolTip == toolName) then
+            return
+        end
+    end
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if not bp then return end
     for _, v in ipairs(bp:GetChildren()) do
         if v:IsA("Tool") and v.Name ~= "Tool"
            and (v.Name == tostring(toolName) or v.ToolTip == toolName) then
             hum:EquipTool(v)
-            return
-        end
-    end
-    -- Also check currently held
-    for _, v in ipairs(char:GetChildren()) do
-        if v:IsA("Tool")
-           and (v.Name == tostring(toolName) or v.ToolTip == toolName) then
             return
         end
     end
@@ -37,16 +38,92 @@ LPC:RegisterMethod("ToggleAbilities", function(ability, forceOn)
         if not char then return end
         local has = char:FindFirstChild("HasBuso")
         if (forceOn and not has) or (not forceOn and has) then
-            Spirit.Remotes.CommF_:InvokeServer("Buso")
+            Remotes.CommF_:InvokeServer("Buso")
         end
     end
 end)
 
-LPC:RegisterMethod("ConfigurationAbilitiesToggle", function()
-    -- Optional; uses CONFIG from Config if present
-    local cfg = Spirit.Config
-    if not cfg then return end
-    LPC.Methods.ToggleAbilities:Call("Buso", cfg.Buso)
+LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- ABILITY BUYER — Geppo, Buso, Ken, Soru
+-- Attempts purchase every 30s until it succeeds, then stops.
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    -- Wait for the character and Data to be ready
+    repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
+    repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
+    task.wait(5)
+
+    local bought = {Geppo = false, Buso = false, Ken = false, Soru = false}
+
+    -- Checks that survive across respawns:
+    --   Buso: is learned if the "Buso" tag exists on the player (persists).
+    --   Ken:  is learned if the "Ken" tag exists.
+    --   Geppo / Soru: no persistent marker — assume bought once the remote
+    --                 returns without error after a successful buy.
+    local function hasTag(name)
+        local ok, v = pcall(function() return LocalPlayer:HasTag(name) end)
+        return ok and v == true
+    end
+
+    while task.wait(30) do
+        pcall(function()
+            local lv = ScriptStorage.PlayerData.Level or 0
+            if lv < 20 then return end
+
+            if not bought.Geppo then
+                SetTask("SubTask", "Buying Geppo...")
+                local ok, r = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Geppo") end)
+                if ok then bought.Geppo = true end
+                task.wait(1)
+            end
+
+            if not bought.Soru then
+                local ok, r = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
+                if ok then bought.Soru = true end
+                task.wait(1)
+            end
+
+            if lv >= 100 then
+                if not bought.Buso and not hasTag("Buso") then
+                    SetTask("SubTask", "Buying Buso Haki...")
+                    local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Buso") end)
+                    if ok then bought.Buso = true end
+                    task.wait(1)
+                end
+
+                if not bought.Ken and not hasTag("Ken") then
+                    SetTask("SubTask", "Buying Observation Haki...")
+                    local ok = pcall(function() return Remotes.CommF_:InvokeServer("KenTalk", "Buy") end)
+                    if ok then bought.Ken = true end
+                    task.wait(1)
+                end
+            end
+
+            if bought.Geppo and bought.Soru and bought.Buso and bought.Ken then
+                SetTask("SubTask", "Abilities acquired")
+                -- keep the loop alive cheaply, no more remote calls
+                while task.wait(60) do end
+            end
+        end)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- AUTO-KEN — keep Observation Haki active
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function()
+            if not (Spirit.Config and Spirit.Config.AutoKen) then return end
+            local char = Spirit.Character
+            if not char then return end
+            if char:FindFirstChild("HasKen") then return end
+            local CommE = game:GetService("ReplicatedStorage").Remotes:FindFirstChild("CommE")
+            if CommE then CommE:FireServer("Ken", true) end
+        end)
+    end
 end)
 
 print("[Spirit] player.lua loaded")
