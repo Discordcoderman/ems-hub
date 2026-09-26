@@ -9,7 +9,7 @@ local Remotes       = Spirit.Remotes
 local SetTask       = Spirit.SetTask
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO SEA 2
+-- AUTO SEA 2 — Sea 1 → Dressrosa
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(0.5) do
@@ -49,13 +49,10 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO SEA 3
+-- AUTO SEA 3 — Sea 2 → Zou
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(0.5) do
-        if not (Spirit.Config and Spirit.Config.AutoSea3) then
-            _G.SeaTransitionActive = false
-        end
         if Spirit.SeaIndex == 3 then _G.RipIndraBegun = false end
         if Spirit.Config and Spirit.Config.AutoSea3 then
             pcall(function()
@@ -92,6 +89,7 @@ task.spawn(function()
                                     Remotes.CommF_:InvokeServer("TravelZou")
                                     local t0 = tick()
                                     repeat task.wait(1) until game.PlaceId == 7449423635
+                                                          or game.PlaceId == 100117331123089
                                                           or Spirit.SeaIndex == 3
                                                           or (tick() - t0) > 60
                                 end
@@ -104,6 +102,7 @@ task.spawn(function()
                             Remotes.CommF_:InvokeServer("TravelZou")
                             local t0 = tick()
                             repeat task.wait(1) until game.PlaceId == 7449423635
+                                                  or game.PlaceId == 100117331123089
                                                   or Spirit.SeaIndex == 3
                                                   or (tick() - t0) > 60
                         else
@@ -114,10 +113,33 @@ task.spawn(function()
                             end
                         end
                     end
-                else
                     _G.SeaTransitionActive = false
                 end
+                -- NOTE: no `else` branch that clears the flag.
+                -- Doing so raced against AutoSea2's own transition.
             end)
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- STUCK-FLAG SAFETY VALVE
+-- If a transition body crashes mid-block, _G.SeaTransitionActive
+-- can stay true forever and freeze the dispatcher. Force-clear
+-- after 180s.
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    local setAt = nil
+    while task.wait(5) do
+        if _G.SeaTransitionActive then
+            setAt = setAt or tick()
+            if tick() - setAt > 180 then
+                warn("[sea] SeaTransitionActive stuck >180s — force clear")
+                _G.SeaTransitionActive = false
+                setAt = nil
+            end
+        else
+            setAt = nil
         end
     end
 end)
