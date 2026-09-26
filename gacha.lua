@@ -1,7 +1,7 @@
--- gacha.lua — Zioles Gacha, fired immediately on load
--- Loaded right after core.lua so this is the first thing the script
--- does that hits the game server. No melee gate, no config toggle,
--- no delay. Rolls once at boot, then re-checks on a 30-minute cycle.
+-- gacha.lua — Zioles Gacha on boot + continuous fruit auto-store
+-- Loaded right after core.lua. Fires the boot roll the moment Data
+-- exists, then keeps a background watcher that stores every fruit
+-- tool that lands in the backpack (gacha, drops, quest rewards).
 local Spirit = getgenv().Spirit
 if not Spirit then error("[gacha] core.lua not loaded") end
 
@@ -12,7 +12,96 @@ local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
 
 -- ═══════════════════════════════════════════════════════════════
--- RF DISCOVERY — try every known path, then fall back to scans.
+-- FRUIT STORE WATCHER
+-- Runs continuously. Watches the Backpack and Character for any
+-- Tool whose OriginalName contains "Fruit" and fires StoreFruit.
+-- Skips anything currently in ScriptStorage.IgnoreStoreFruits
+-- (load-fruit-for-raid flows) or already owned.
+-- ═══════════════════════════════════════════════════════════════
+local ownFruitCache = {}
+local lastCacheAt = 0
+local STORE_COOLDOWN = 1   -- seconds between scans
+
+local function refreshOwnFruitCache()
+    if os.time() - lastCacheAt < 30 then return end
+    lastCacheAt = os.time()
+    local ok, inv = pcall(function()
+        return Remotes.CommF_:InvokeServer("getInventoryFruits")
+    end)
+    if ok and type(inv) == "table" then
+        for _, v in pairs(inv) do
+            if type(v) == "table" and v.Name then
+                ownFruitCache[v.Name] = true
+            end
+        end
+    end
+end
+
+local function isIgnored(name, originalName)
+    if not ScriptStorage.IgnoreStoreFruits then return false end
+    for _, ig in ipairs(ScriptStorage.IgnoreStoreFruits) do
+        if ig == name or ig == originalName then return true end
+    end
+    return false
+end
+
+local function storeFruitTool(tool)
+    if not tool or not tool.Parent then return end
+    if not tool:IsA("Tool") then return end
+
+    local original = tool:GetAttribute("OriginalName")
+    if not original or original == "" then
+        -- Fall back to tool name if attribute missing.
+        if string.find(tool.Name, "Fruit") then
+            original = string.gsub(tool.Name, " Fruit$", "")
+        else
+            return
+        end
+    end
+
+    -- Skip anything being actively loaded for raid/trevor use.
+    if isIgnored(tool.Name, original) then return end
+
+    -- Skip if the server already has this fruit in storage and the
+    -- tool is just being moved around.
+    if ownFruitCache[original] then
+        -- Still attempt store in case it's a duplicate that landed.
+    end
+
+    pcall(function()
+        Remotes.CommF_:InvokeServer("StoreFruit", original, tool)
+    end)
+    ownFruitCache[original] = true
+end
+
+local function scanContainer(container)
+    if not container then return end
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("Tool") then
+            local tip = child.ToolTip
+            local nameFruit = string.find(child.Name, "Fruit")
+            local origFruit = child:GetAttribute("OriginalName")
+            if tip == "Blox Fruit" or nameFruit or origFruit then
+                storeFruitTool(child)
+            end
+        end
+    end
+end
+
+task.spawn(function()
+    while task.wait(STORE_COOLDOWN) do
+        pcall(function()
+            refreshOwnFruitCache()
+            scanContainer(LocalPlayer:FindFirstChild("Backpack"))
+            scanContainer(LocalPlayer.Character)
+        end)
+    end
+end)
+
+print("[gacha] fruit auto-store watcher armed")
+
+-- ═══════════════════════════════════════════════════════════════
+-- RF DISCOVERY — try every known path, fall back to scans.
 -- ═══════════════════════════════════════════════════════════════
 local GachaRF
 local gachaResolved = false
@@ -64,9 +153,6 @@ local function tryResolve()
     return nil
 end
 
--- ═══════════════════════════════════════════════════════════════
--- CALL — invoke with the standard payload. Returns (ok, result).
--- ═══════════════════════════════════════════════════════════════
 local function gachaCall(ctx)
     local rf = tryResolve()
     if not rf then return false, "no RF" end
@@ -81,32 +167,19 @@ local function gachaCall(ctx)
     return true, result
 end
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO-STORE SWEEP — rolled fruit lands in backpack; core.lua's
--- MeleeCheck listener usually grabs it, this is belt-and-braces.
--- ═══════════════════════════════════════════════════════════════
-local function sweepBackpackFruits()
+-- Post-roll store sweep — faster than waiting for the 1s watcher on
+-- the exact moment a roll completes.
+local function storeSweepNow()
     pcall(function()
-        local bp = LocalPlayer:FindFirstChild("Backpack")
-        if not bp then return end
-        for _, tool in ipairs(bp:GetChildren()) do
-            if tool:IsA("Tool") then
-                local orig = tool:GetAttribute("OriginalName")
-                if orig and orig:find("Fruit") then
-                    Remotes.CommF_:InvokeServer("StoreFruit", orig, tool)
-                    task.wait(0.4)
-                end
-            end
-        end
+        scanContainer(LocalPlayer:FindFirstChild("Backpack"))
+        scanContainer(LocalPlayer.Character)
     end)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BOOT ROLL — fires the moment Data exists. No dependency on
--- melee state, no config toggle, no delay.
+-- BOOT ROLL — fires the moment Data exists.
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
-    -- Wait for Data (level/beli container) so we're past the loading screen.
     local waited = 0
     while not LocalPlayer:FindFirstChild("Data") and waited < 90 do
         task.wait(0.5)
@@ -117,7 +190,6 @@ task.spawn(function()
         return
     end
 
-    -- Give the client one second to finish replicating remotes.
     task.wait(1)
 
     print("[gacha] boot roll — checking requirements")
@@ -128,7 +200,6 @@ task.spawn(function()
     end
     print("[gacha] boot check result: " .. tostring(result))
 
-    -- Interpret the result. Any of these fields means "ready".
     local ready = false
     if type(result) == "table" then
         ready = (result.RequirementsMet == true)
@@ -147,23 +218,25 @@ task.spawn(function()
     local pok, pres = gachaCall("Purchase")
     print("[gacha] boot purchase → " .. tostring(pok) .. " " .. tostring(pres))
     if pok then
+        -- Two sweeps: one immediate, one 3s later (server replication).
+        task.wait(1)
+        storeSweepNow()
         task.wait(2)
-        sweepBackpackFruits()
+        storeSweepNow()
         print("[gacha] boot roll complete")
     end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- ONGOING CYCLE — 30 minute check, 6 hour lock after a success.
+-- ONGOING CYCLE — 30 min check, 6 h lock after a success.
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while not LocalPlayer:FindFirstChild("Data") do task.wait(2) end
-    task.wait(30)  -- let the boot roll finish first
+    task.wait(30)
 
     local nextAttempt = os.time() + 60
     while task.wait(30) do
         pcall(function()
-            -- Config toggle still honored if you want to shut it off.
             local E = Spirit.Config and Spirit.Config.Extras
             if E and E.AutoGachaFruit == false then return end
 
@@ -191,7 +264,6 @@ task.spawn(function()
                 return
             end
 
-            -- Beli gate.
             local minBeli = (E and E.GachaMinBeli) or 100000
             local beli = Spirit.ScriptStorage.PlayerData.Beli or 0
             if beli < minBeli then
@@ -203,8 +275,10 @@ task.spawn(function()
             print("[gacha] cycle purchase → " .. tostring(pok) .. " " .. tostring(pres))
             if pok then
                 nextAttempt = os.time() + (6 * 60 * 60)
+                task.wait(1)
+                storeSweepNow()
                 task.wait(2)
-                sweepBackpackFruits()
+                storeSweepNow()
             else
                 nextAttempt = os.time() + (10 * 60)
             end
