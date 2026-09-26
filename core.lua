@@ -431,11 +431,10 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- TEAM SET — fires ClickDetector on Pirate NPC (no remote)
--- Blox Fruits team selection is done by walking up to the Pirate
--- NPC at the starter island and clicking its ClickDetector. There's
--- no SetTeam remote in the current game build; older scripts used
--- one, but the click path is what actually works now.
+-- TEAM SET — click the Pirates frame on the Pick-A-Side GUI
+-- Exact path: PlayerGui.Main.ChooseTeam.Container.Pirates
+-- Simulates a real mouse click at the element's center via
+-- VirtualInputManager; falls back to firesignal / Activate.
 -- ═══════════════════════════════════════════════════════════════
 local function getCurrentTeam()
     local p = LocalPlayer
@@ -447,39 +446,66 @@ local function getCurrentTeam()
     return nil
 end
 
-local function findPirateNPC()
-    local containers = {}
-    if workspace:FindFirstChild("NPCs") then table.insert(containers, workspace.NPCs) end
-    if workspace:FindFirstChild("Characters") then table.insert(containers, workspace.Characters) end
-    local RS = game:GetService("ReplicatedStorage")
-    if RS:FindFirstChild("NPCs") then table.insert(containers, RS.NPCs) end
+local function findPiratesFrame()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    if not pg then return nil end
 
-    for _, c in ipairs(containers) do
-        -- Exact name match first
-        local n = c:FindFirstChild("Pirate")
-        if n and n:IsA("Model") then return n end
-        -- Then any NPC whose name starts with "Pirate" and has a ClickDetector
-        for _, child in ipairs(c:GetChildren()) do
-            if child:IsA("Model")
-               and child.Name:sub(1, 6) == "Pirate"
-               and child:FindFirstChildWhichIsA("ClickDetector", true) then
-                return child
+    -- Primary: exact path PlayerGui.Main.ChooseTeam.Container.Pirates
+    local main = pg:FindFirstChild("Main")
+    if main then
+        local chooseTeam = main:FindFirstChild("ChooseTeam")
+        if chooseTeam then
+            local container = chooseTeam:FindFirstChild("Container")
+            if container then
+                local pirates = container:FindFirstChild("Pirates")
+                if pirates then return pirates end
             end
+        end
+    end
+
+    -- Fallback: recursive search for a GuiObject literally named "Pirates"
+    for _, gui in ipairs(pg:GetDescendants()) do
+        if gui.Name == "Pirates"
+           and (gui:IsA("TextButton") or gui:IsA("ImageButton")
+                or gui:IsA("Frame") or gui:IsA("GuiObject")) then
+            return gui
         end
     end
     return nil
 end
 
-local function findClickOrPrompt(npc)
-    if not npc then return nil, nil end
-    local cd = npc:FindFirstChildWhichIsA("ClickDetector", true)
-    local pp = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
-    return cd, pp
-end
+local function clickAtCenter(obj)
+    if not obj then return false end
 
--- Tween destination — Pirate starter island. Can be overridden by
--- passing Config.PirateNPC_CF in data.lua.
-local PIRATE_NPC_CF = CFrame.new(1047, 15, 1506)
+    local ap = obj.AbsolutePosition
+    local as = obj.AbsoluteSize
+    local cx = ap.X + (as.X / 2)
+    local cy = ap.Y + (as.Y / 2)
+    if cx ~= cx or cy ~= cy then return false end   -- NaN guard
+
+    -- Method 1: VirtualInputManager mouse click at the exact center
+    local ok = pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+        task.wait(0.1)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+        task.wait(0.12)
+        VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
+        task.wait(0.1)
+        VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
+    end)
+    if ok then return true end
+
+    -- Method 2: firesignal on MouseButton1Click
+    if typeof(firesignal) == "function" then
+        if pcall(firesignal, obj.MouseButton1Click) then return true end
+    end
+
+    -- Method 3: Activate
+    if pcall(function() obj:Activate() end) then return true end
+
+    return false
+end
 
 local function setPirateTeam()
     repeat task.wait(0.25) until Spirit.Humanoid and Spirit.Humanoid.Health > 0
@@ -490,10 +516,9 @@ local function setPirateTeam()
         return
     end
 
-    print("[team] moving to Pirate NPC to join")
+    print("[team] waiting for Pick-A-Side GUI…")
 
-    for attempt = 1, 20 do
-        -- Re-check team
+    for attempt = 1, 30 do
         local cur = getCurrentTeam()
         if cur and string.lower(cur) == "pirates" then
             print("[team] joined Pirates")
@@ -501,54 +526,26 @@ local function setPirateTeam()
             return
         end
 
-        -- Find the NPC (may not have replicated yet)
-        local npc = findPirateNPC()
-        local targetCF = PIRATE_NPC_CF
-
-        if npc then
-            local pivot = npc:GetPivot()
-            targetCF = CFrame.new(pivot.Position + Vector3.new(0, 3, 0))
-        end
-
-        -- Tween close to the NPC if we're not already there
-        local hrp = Spirit.HumanoidRootPart
-        if hrp then
-            local dist = (hrp.Position - targetCF.Position).Magnitude
-            if dist > 8 then
-                Spirit.TweenController.Create(targetCF)
-                -- Give the tween time to land
-                local waitStart = os.time()
-                while os.time() - waitStart < 5 do
-                    if (Spirit.HumanoidRootPart.Position - targetCF.Position).Magnitude < 12 then
-                        break
-                    end
-                    task.wait(0.2)
-                end
-            end
-        end
-
-        -- Fire the click/prompt
-        if npc then
-            local cd, pp = findClickOrPrompt(npc)
-            if cd and typeof(fireclickdetector) == "function" then
-                pcall(function() fireclickdetector(cd) end)
-                print("[team] fired ClickDetector on " .. npc.Name)
-            end
-            if pp and typeof(fireproximityprompt) == "function" then
-                pcall(function() fireproximityprompt(pp) end)
-                print("[team] fired ProximityPrompt on " .. npc.Name)
-            end
+        local frame = findPiratesFrame()
+        if frame then
+            local cx = frame.AbsolutePosition.X + frame.AbsoluteSize.X / 2
+            local cy = frame.AbsolutePosition.Y + frame.AbsoluteSize.Y / 2
+            print(("[team] attempt %d — clicking %s at (%d,%d)")
+                :format(attempt, frame:GetFullName(), cx, cy))
+            clickAtCenter(frame)
         else
-            -- NPC not replicated — try the click remote path directly
-            pcall(function()
-                game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", "Pirates")
-            end)
+            if attempt % 5 == 0 then
+                print("[team] Pick-A-Side GUI not found yet (attempt " .. attempt .. ")")
+                pcall(function()
+                    game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", "Pirates")
+                end)
+            end
         end
 
-        task.wait(1.5)
+        task.wait(1.0)
     end
 
-    print("[team] SetTeam attempts done — current team is: " .. tostring(getCurrentTeam()))
+    print("[team] done — current team: " .. tostring(getCurrentTeam()))
     SetTask("SubTask", "Team: " .. tostring(getCurrentTeam() or "?"))
 end
 
