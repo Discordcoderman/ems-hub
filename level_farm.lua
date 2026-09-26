@@ -391,12 +391,16 @@ end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
 -- ═══════════════════════════════════════════════════════════════
--- LevelFarm
+-- LevelFarm — generic tier-transition state machine
+-- Works identically for every tier from Bandit onward.
 -- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 local LastStartQuest = 0
 local LastAbandon = 0
+local LastTargetQname = nil      -- detects tier change
+local AbandonStartedAt = nil     -- when we last fired AbandonQuest
+local CurrentTierCooldown = 0
 local LastDebug = 0
 
 LF:RegisterMethod("Refresh", function()
@@ -406,16 +410,9 @@ end)
 
 LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
-
-    -- Debug every 3s so we can see exactly what path is executing
-    if os.time() - LastDebug > 3 then
-        LastDebug = os.time()
-        print(("[LF] Start called | step=%s lv=%s sea=%s"):format(
-            tostring(step), tostring(currentLevel), tostring(Spirit.SeaIndex)))
-    end
-
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
+    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -433,52 +430,80 @@ LF:RegisterMethod("Start", function(step)
 
     local Q = ManualLevelLookup()
     if not Q then
-        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel) .. " sea=" .. tostring(Spirit.SeaIndex))
+        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel))
         return
     end
 
-    if os.time() - LastDebug > 3 then
-        print(("[LF] Q=%s / %s (PosQ=%s)"):format(
-            tostring(Q.Mon), tostring(Q.Qname), tostring(Q.PosQ)))
+    local now = os.time()
+
+    -- ────────────────────────────────────────────────────────────
+    -- STEP 1 — Detect tier change
+    -- Every time the target quest changes (level crossed a boundary),
+    -- reset local state and queue an abandon of whatever is currently
+    -- active (from either source: remote controller or GUI).
+    -- ────────────────────────────────────────────────────────────
+    if LastTargetQname ~= Q.Qname then
+        print(("[LF] tier change: %s → %s (lv=%d)")
+            :format(tostring(LastTargetQname), tostring(Q.Qname), currentLevel))
+        LastTargetQname = Q.Qname
+        AbandonStartedAt = nil
+        CurrentTierCooldown = 0
+        -- Local reset so remote doesn't claim the old quest next tick
+        pcall(function() Spirit.QuestController:Reset() end)
     end
 
+    -- ────────────────────────────────────────────────────────────
+    -- STEP 2 — Check current quest state
+    -- ────────────────────────────────────────────────────────────
     local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
-    if remoteQuest == Q.Qname then
+    local guiMob = Spirit.GetCurrentClaimQuest()
+
+    local remoteMatches = (remoteQuest == Q.Qname)
+    local guiMatches = guiMob and (guiMob == Q.NameMon or guiMob == Q.NameMon .. "s")
+    local anyWrongQuest = (remoteQuest ~= "" and not remoteMatches)
+                       or (guiMob ~= nil and not guiMatches)
+
+    -- ────────────────────────────────────────────────────────────
+    -- STEP 3 — Abandon wrong quest (throttled)
+    -- ────────────────────────────────────────────────────────────
+    if anyWrongQuest then
+        if CurrentTierCooldown == 0 then
+            -- start the abandon window
+            if now - LastAbandon > 2 then
+                LastAbandon = now
+                AbandonStartedAt = now
+                print("[LF] abandoning: remote=" .. tostring(remoteQuest)
+                    .. " gui=" .. tostring(guiMob))
+                Spirit.J.AbandonQuest(Spirit.J)
+            end
+            CurrentTierCooldown = now
+        end
+
+        -- If abandon was started more than 2s ago and remote STILL claims
+        -- something, force reset locally so we stop believing it
+        if AbandonStartedAt and now - AbandonStartedAt >= 2 then
+            print("[LF] abandon timeout — force resetting QuestController")
+            pcall(function() Spirit.QuestController:Reset() end)
+            remoteQuest = ""
+            AbandonStartedAt = nil
+        end
+
+        Spirit.SetTask("MainTask", "Level Farm | Abandoning → " .. Q.Mon)
+        return
+    end
+
+    -- ────────────────────────────────────────────────────────────
+    -- STEP 4 — Right quest active → attack
+    -- ────────────────────────────────────────────────────────────
+    if remoteMatches or guiMatches then
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
         Spirit.CombatController.Attack(Q.Mon)
         return
     end
 
-    if remoteQuest ~= "" then
-        local now = os.time()
-        if now - LastAbandon > 3 then
-            LastAbandon = now
-            print("[LF] abandoning wrong quest (remote):", tostring(remoteQuest))
-            Spirit.J.AbandonQuest(Spirit.J)
-        end
-        Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(remoteQuest))
-        return
-    end
-
-    local guiMob = Spirit.GetCurrentClaimQuest()
-    if guiMob then
-        local matches = (guiMob == Q.NameMon) or (guiMob == Q.NameMon .. "s")
-        if matches then
-            Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
-            Spirit.CombatController.Attack(Q.Mon)
-            return
-        else
-            local now = os.time()
-            if now - LastAbandon > 3 then
-                LastAbandon = now
-                print("[LF] abandoning wrong quest (gui):", tostring(guiMob))
-                Spirit.J.AbandonQuest(Spirit.J)
-            end
-            Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(guiMob))
-            return
-        end
-    end
-
+    -- ────────────────────────────────────────────────────────────
+    -- STEP 5 — No active quest → walk to giver
+    -- ────────────────────────────────────────────────────────────
     if not Q.PosQ then return end
     local dist = Spirit.CaculateDistance(Q.PosQ)
 
@@ -488,7 +513,9 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    local now = os.time()
+    -- ────────────────────────────────────────────────────────────
+    -- STEP 6 — At giver → fire StartQuest every 5s and attack
+    -- ────────────────────────────────────────────────────────────
     if now - LastStartQuest > 5 then
         LastStartQuest = now
         local ok, res = pcall(function()
@@ -497,7 +524,9 @@ LF:RegisterMethod("Start", function(step)
         print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
             tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
     end
-    Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accepting quest")
+
+    Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
+    Spirit.CombatController.Attack(Q.Mon)
 end)
 
 Spirit.__level_farm_ready = true
