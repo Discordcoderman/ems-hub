@@ -12,6 +12,7 @@ local Remotes       = Spirit.Remotes
 
 -- ═══════════════════════════════════════════════════════════════
 -- MANUAL LEVEL LOOKUP
+-- Maps ScriptStorage.PlayerData.Level → {Mon, Qdata, Qname, NameMon, PosQ, PosM}
 -- ═══════════════════════════════════════════════════════════════
 local function ManualLevelLookup()
     local lv = ScriptStorage.PlayerData.Level or 0
@@ -394,7 +395,7 @@ end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
 -- ═══════════════════════════════════════════════════════════════
--- LevelFarm
+-- LevelFarm TASK
 -- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
@@ -402,18 +403,25 @@ local LevelFarmTTL = 0
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
+
     local lv = ScriptStorage.PlayerData.Level or 0
-    if lv < 10 then return 1
-    elseif lv < 70 then return 2
-    elseif lv < 120 then return 3
-    else return 4 end
+    if lv < 10 then
+        return 1
+    elseif lv < 70 then
+        return 2
+    elseif lv < 120 then
+        return 3
+    else
+        return 4
+    end
 end)
 
 LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
+
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
-    -- Opportunistic Bones conversion
+    -- Sea 3 opportunistic Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -429,7 +437,7 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
-    -- ═══ Step 2: Shanda ═══
+    -- ── Step 2: level 10-69 → Shanda @ Upper Skylands ─────────────
     if step == 2 then
         if Spirit.SeaIndex == 1 then
             local loc = LocalPlayer:GetAttribute("CurrentLocation")
@@ -440,6 +448,7 @@ LF:RegisterMethod("Start", function(step)
             end
         end
         Spirit.SetTask("MainTask", "Level Farm | Shanda | Upper Skylands")
+
         local foundMob = false
         for _, folder in ipairs({Workspace.Enemies, ReplicatedStorage}) do
             for _, v in ipairs(folder:GetChildren()) do
@@ -447,6 +456,7 @@ LF:RegisterMethod("Start", function(step)
                     local hum = v:FindFirstChildOfClass("Humanoid")
                     if hum and hum.Health > 0 then
                         foundMob = true
+                        Spirit.SetTask("SubTask", "Attacking Shanda")
                         Spirit.CombatController.Attack("Shanda")
                         break
                     end
@@ -464,7 +474,7 @@ LF:RegisterMethod("Start", function(step)
             end
         end
 
-    -- ═══ Step 3: God's Guard ═══
+    -- ── Step 3: level 70-119 → God's Guard @ Skylands ─────────────
     elseif step == 3 then
         if Spirit.SeaIndex == 1 then
             local loc = LocalPlayer:GetAttribute("CurrentLocation")
@@ -475,6 +485,7 @@ LF:RegisterMethod("Start", function(step)
             end
         end
         Spirit.SetTask("MainTask", "Level Farm | God's Guard | Skylands")
+
         local foundMob = false
         for _, folder in ipairs({Workspace.Enemies, ReplicatedStorage}) do
             for _, v in ipairs(folder:GetChildren()) do
@@ -482,6 +493,7 @@ LF:RegisterMethod("Start", function(step)
                     local hum = v:FindFirstChildOfClass("Humanoid")
                     if hum and hum.Health > 0 then
                         foundMob = true
+                        Spirit.SetTask("SubTask", "Attacking God's Guard")
                         Spirit.CombatController.Attack("God's Guard")
                         break
                     end
@@ -497,7 +509,7 @@ LF:RegisterMethod("Start", function(step)
             end
         end
 
-    -- ═══ Step 4 / 1: ManualLevelLookup, GUI-driven quest state ═══
+    -- ── Step 4 / 1: ManualLevelLookup, GUI-driven quest state ─────
     else
         local Q = ManualLevelLookup()
         if not Q then
@@ -506,25 +518,25 @@ LF:RegisterMethod("Start", function(step)
         end
         Spirit.SetTask("SubTask", Q.NameMon .. " | " .. Q.Mon)
 
-        -- ── PRIMARY source of truth: the PlayerGui quest frame.
-        -- Blox Fruits hides this frame the instant a quest is completed.
-        -- Reading it avoids relying on the QuestUpdate remote, which
-        -- doesn't reliably fire on quest completion in every sea.
+        -- PRIMARY source of truth: PlayerGui quest frame.
+        -- Blox Fruits hides this frame the instant a quest completes;
+        -- reading it avoids relying on the QuestUpdate remote, which
+        -- doesn't always fire on completion in every sea.
         local guiMob, guiText = Spirit.GetCurrentClaimQuest()
 
         if guiMob then
-            -- A quest is currently active
+            -- Active quest — check it matches what we should be doing
             local matches = (guiMob == Q.NameMon)
                          or (guiMob == Q.NameMon .. "s")
                          or (guiText and string.find(guiText, Q.NameMon, 1, true) ~= nil)
 
             if not matches then
-                -- Stale quest from a previous level tier — drop it
+                -- Stale quest from a previous tier — drop it
                 Spirit.SetTask("MainTask", "Level Farm | Abandoning stale quest: " .. tostring(guiMob))
                 return Spirit.J.AbandonQuest(Spirit.J)
             end
 
-            -- Right quest active — keep farming
+            -- Right quest — keep farming
             Spirit.CombatController.Attack(Q.Mon)
         else
             -- No quest active — accept it
@@ -535,7 +547,7 @@ LF:RegisterMethod("Start", function(step)
             task.wait(0.5)
             LevelFarmTTL = 0
             Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-            -- Return WITHOUT attacking — next tick sees the new GUI state
+            -- Return without attacking — next tick sees the new GUI state
             task.wait(0.4)
         end
     end
