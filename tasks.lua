@@ -99,15 +99,16 @@ end
 
 -- ═══════════════════════════════════════════════════════════════
 -- TASK ORDER — first match wins.
--- Saber hoisted to the top priority block: at level 200+, until the
--- Saber item is in the backpack, it claims every dispatcher tick.
--- Once Saber is owned, Saber.Refresh returns nil and the rest of the
--- order resumes. No manual toggle needed.
+-- Saber is #1. At level 200+, until Saber is in the backpack, it
+-- claims every dispatcher tick — overriding level farming, melee
+-- buying, fruit collection, and every other task. Once Saber is
+-- owned, Saber.Refresh returns nil and everything below resumes.
 -- ═══════════════════════════════════════════════════════════════
 Spirit.TasksOrder = {
+    "Saber",                 -- absolute top — level 200 one-shot
+
     "MeleesController",
     "CollectDrops",
-    "Saber",                 -- priority one-shot at level 200
 
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
@@ -128,6 +129,8 @@ Spirit.ParsingTimes = ParsingTimes
 local warnedTasks = {}
 Spirit.CurrentTask = nil
 
+-- Fruit-priority short-circuit stays above everything so a committed
+-- fruit tween never gets cancelled by Saber routing or anything else.
 local function runFruitPriority()
     if not _G.FruitPriorityActive then return false end
     local cd = FunctionsHandler.CollectDrops
