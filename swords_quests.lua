@@ -1,39 +1,60 @@
 -- sword_quests.lua
+-- Saber fires automatically at level 200+ and runs until Saber is in
+-- the backpack — including the Saber Expert kill and the drop pickup.
+-- No spawn-check gate on the boss: step 7 fires whenever the relic has
+-- been placed, so the task never releases to LevelFarm mid-quest.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[sword_quests] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[sword_quests] tasks.lua not loaded") end
 
-local Services      = Spirit.Services
+local Services          = Spirit.Services
 local ReplicatedStorage = Services.ReplicatedStorage
-local LocalPlayer   = Spirit.LocalPlayer
-local ScriptStorage = Spirit.ScriptStorage
-local Remotes       = Spirit.Remotes
-local SetTask       = Spirit.SetTask
-local CheckItem     = Spirit.CheckItem
+local LocalPlayer       = Spirit.LocalPlayer
+local ScriptStorage     = Spirit.ScriptStorage
+local Remotes           = Spirit.Remotes
+local SetTask           = Spirit.SetTask
+local CheckItem         = Spirit.CheckItem
 
 -- ═══════════════════════════════════════════════════════════════
 -- SABER
+-- Stage map:
+--   1 plates → 2 torch → 3 cup → 4 rich son → 5 mob leader
+--   → 6 relic → 7 kill Saber Expert → 8 collect drop
+-- Refresh exits when Saber is in the backpack.
 -- ═══════════════════════════════════════════════════════════════
 local Saber = Spirit.FunctionsHandler.Saber
 
 Saber:RegisterMethod("Refresh", function()
-    if not (Spirit.Config and Spirit.Config.Items and Spirit.Config.Items.Saber) then return nil end
     if ScriptStorage.Backpack.Saber then return nil end
+    if CheckItem("Saber") then return nil end
     if (ScriptStorage.PlayerData.Level or 0) < 200 then return nil end
+
     local prog = Remotes.CommF_:InvokeServer("ProQuestProgress")
     if not prog then return nil end
-    local step
+
+    -- Plates: any false plate means stage 1 is unfinished.
+    local allPlatesDone = true
+    local hasPlateKey = false
     for _, p in pairs(prog.Plates or {}) do
-        if p == false then step = 1 end
+        hasPlateKey = true
+        if p == false then allPlatesDone = false break end
     end
-    if not step then
-        if not prog.UsedTorch then step = 2
-        elseif not prog.UsedCup then step = 3
-        elseif not prog.TalkedSon then step = 4
-        elseif not prog.KilledMob then step = 5
-        elseif not prog.UsedRelic then step = 6
-        elseif not prog.KilledShanks and ScriptStorage.Enemies["Saber Expert"] then step = 7 end
-    end
+    -- Fresh account with no plates table — still stage 1.
+    if not hasPlateKey then allPlatesDone = false end
+
+    local step
+    if not allPlatesDone       then step = 1
+    elseif not prog.UsedTorch  then step = 2
+    elseif not prog.UsedCup    then step = 3
+    elseif not prog.TalkedSon  then step = 4
+    elseif not prog.KilledMob  then step = 5
+    elseif not prog.UsedRelic  then step = 6
+    elseif not prog.KilledShanks then step = 7   -- boss kill required
+    else step = 8 end                             -- pickup phase
+    -- step 8 stays active until Saber lands in the backpack. If the
+    -- pickup is gone and Saber still isn't held, we keep returning 8
+    -- next tick and re-scan.
+
     Saber:Set("CurrentProgressLevel", step)
     Saber:Set("LastestRefreshSenque", os.time())
     return step
@@ -41,27 +62,34 @@ end)
 
 Saber:RegisterMethod("Start", function(step)
     if not step then return end
+
     if step == 1 then
+        SetTask("MainTask", "Saber | Activating quest plates")
         local plates = {}
         pcall(function()
             local jungle = workspace.Map.Jungle
-            for _, pl in ipairs(jungle.QuestPlates:GetChildren()) do
-                if pl:FindFirstChild("Button") then table.insert(plates, pl) end
+            if jungle and jungle:FindFirstChild("QuestPlates") then
+                for _, pl in ipairs(jungle.QuestPlates:GetChildren()) do
+                    if pl:FindFirstChild("Button") then table.insert(plates, pl) end
+                end
             end
         end)
         for i, pl in ipairs(plates) do
             SetTask("MainTask", "Saber | Plate " .. i .. "/" .. #plates)
-            while Spirit.CaculateDistance(pl.Button.CFrame) > 20 do
+            local deadline = tick() + 15
+            while Spirit.CaculateDistance(pl.Button.CFrame) > 15 and tick() < deadline do
                 task.wait()
                 Spirit.TweenController.Create(pl.Button.CFrame)
             end
-            task.wait(1)
+            task.wait(0.5)
         end
+
     elseif step == 2 then
         SetTask("MainTask", "Saber | Torch")
         Remotes.CommF_:InvokeServer("ProQuestProgress", "GetTorch")
         task.wait(1)
         Remotes.CommF_:InvokeServer("ProQuestProgress", "DestroyTorch")
+
     elseif step == 3 then
         SetTask("MainTask", "Saber | Cup")
         Remotes.CommF_:InvokeServer("ProQuestProgress", "GetCup")
@@ -71,24 +99,69 @@ Saber:RegisterMethod("Start", function(step)
             Remotes.CommF_:InvokeServer("ProQuestProgress", "FillCup", LocalPlayer.Character.Cup)
         end
         Remotes.CommF_:InvokeServer("ProQuestProgress", "SickMan")
+
     elseif step == 4 then
         SetTask("MainTask", "Saber | Rich Son")
         Remotes.CommF_:InvokeServer("ProQuestProgress", "RichSon")
+
     elseif step == 5 then
         SetTask("MainTask", "Saber | Mob Leader")
         Spirit.CombatController.Attack("Mob Leader")
+
     elseif step == 6 then
         SetTask("MainTask", "Saber | Relic")
         Remotes.CommF_:InvokeServer("ProQuestProgress", "RichSon")
         Remotes.CommF_:InvokeServer("ProQuestProgress", "PlaceRelic")
+
     elseif step == 7 then
-        SetTask("MainTask", "Saber | Expert")
+        -- Enforced boss kill — no spawn check. If the boss isn't up yet,
+        -- CombatController routes to its spawn region and waits. Refresh
+        -- keeps returning 7 until KilledShanks registers.
+        SetTask("MainTask", "Saber | Killing Saber Expert")
         Spirit.CombatController.Attack("Saber Expert")
+
+    elseif step == 8 then
+        -- Saber Expert down. Pick up the drop.
+        SetTask("MainTask", "Saber | Collecting Saber drop")
+
+        local pickup
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Tool") and obj.Name == "Saber" then
+                pickup = obj
+                break
+            end
+        end
+
+        if pickup then
+            local handle = pickup:FindFirstChild("Handle")
+                or pickup:FindFirstChildWhichIsA("BasePart")
+            if handle then
+                Spirit.TweenController.Create(handle.CFrame)
+                local hrp = Spirit.HumanoidRootPart
+                if hrp and (hrp.Position - handle.Position).Magnitude < 10 then
+                    pcall(function()
+                        if firetouchinterest then
+                            firetouchinterest(hrp, handle, 0)
+                            task.wait(0.05)
+                            firetouchinterest(hrp, handle, 1)
+                        end
+                    end)
+                end
+            end
+        else
+            -- Drop not visible. Could be mid-spawn or already on the way
+            -- into the backpack — nudge toward the Saber Expert spawn
+            -- area so we're close if it reappears.
+            Spirit.TweenController.Create(CFrame.new(-1405, 30, -55))
+        end
     end
 end)
 
 pcall(function()
-    Remotes.RefreshQuestPro.OnClientEvent:Connect(function() Saber.Methods.Refresh:Call() end)
+    Remotes.RefreshQuestPro.OnClientEvent:Connect(function()
+        local ok, err = pcall(function() Saber.Methods.Refresh:Call() end)
+        if not ok then print("[saber] refresh event error:", err) end
+    end)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
@@ -174,7 +247,6 @@ CDK:RegisterMethod("DoDimension", function(name)
         Spirit.TweenController.Create(LocalPlayer.Character.HumanoidRootPart.CFrame)
         if os.time() - t0 > 60 then return end
     until os.time() - (Spirit.TorchEnabledTime or 0) < 10
-    -- Simplified dimension handling
     Spirit.Hop()
 end)
 
@@ -271,7 +343,6 @@ CDK:RegisterMethod("Start", function(cache)
         end
         CDK:Set("Progress", nil)
     else
-        -- Trial steps
         local side, step = cache[1], cache[2]
         if side == "Evil" and step == 1 then
             local e = ScriptStorage.Enemies["Forest Pirate"]
@@ -305,7 +376,7 @@ CDK:RegisterMethod("Start", function(cache)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- STUBS for remaining sword quests (register empty so no crash)
+-- Stubs for remaining sword quests
 -- ═══════════════════════════════════════════════════════════════
 for _, name in ipairs({
     "Rengoku", "SpikeyTrident", "SharkAchor", "Pole", "FoxLamp",
