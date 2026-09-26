@@ -1,11 +1,11 @@
 --[[
     EMS Hub — loader
     Usage:
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/Discordcoderman/ems-hub/main/loader.lua?" .. tostring(tick())))()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/Discordcoderman/ems-hub/main/loader.lua"))()
 ]]
 
 local BRANCH = "main"
-local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s?%d"):format(BRANCH, os.time())
+local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s"):format(BRANCH)
 
 local MODULES = {
     "core.lua","data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
@@ -19,8 +19,8 @@ local env = getgenv()
 
 -- ═══════════════════════════════════════════════════════════════
 -- TEAM SELECT — click Pirates on the "Pick A Side" GUI
--- Runs concurrently with module loading. Path:
---   PlayerGui.Main.ChooseTeam.Container.Pirates
+-- Path: PlayerGui.Main.ChooseTeam.Container.Pirates
+-- Runs concurrently with module loading.
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local Players = game:GetService("Players")
