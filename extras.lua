@@ -1,4 +1,4 @@
--- extras.lua — Redeem codes, no-animation, auto-gacha, auto-collect-fruits, VOid attack
+-- extras.lua — Redeem, no-anim, auto-gacha (opt-in), auto-collect (opt-in), VOid attack
 local Spirit = getgenv().Spirit
 if not Spirit then error("[extras] core.lua not loaded") end
 
@@ -6,60 +6,35 @@ local Services      = Spirit.Services
 local LocalPlayer   = Spirit.LocalPlayer
 local ReplicatedStorage = Services.ReplicatedStorage
 
--- ═══ Config defaults (merged, don't overwrite user settings) ═══
 if Spirit.Config then
     Spirit.Config.Extras = Spirit.Config.Extras or {}
     local E = Spirit.Config.Extras
-    if E.AutoGachaFruit   == nil then E.AutoGachaFruit   = true end
+    if E.AutoGachaFruit   == nil then E.AutoGachaFruit   = false end
     if E.GachaMinBeli     == nil then E.GachaMinBeli     = 100000 end
-    if E.AutoCollectFruit == nil then E.AutoCollectFruit = true end
-    if E.CollectInterval  == nil then E.CollectInterval  = 5 end
+    if E.AutoCollectFruit == nil then E.AutoCollectFruit = false end
+    if E.CollectInterval  == nil then E.CollectInterval  = 15 end
 end
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO REDEEM
--- ═══════════════════════════════════════════════════════════════
+-- Auto Redeem
 task.spawn(function()
     local Remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
     local Redeem = Remotes and Remotes:WaitForChild("Redeem", 30)
     if not Redeem then return end
-
     local CODES = {
-        "EASTEREXP",
-        "fudd10",
-        "fudd10_V2",
-        "Chandler",
-        "BIGNEWS",
-        "KITT_RESET",
-        "Sub2UncleKizaru",
-        "SUB2GAMERROBOT_RESET1",
-        "Sub2Fer999",
-        "Enyu_is_Pro",
-        "JCWK",
-        "StarcodeHEO",
-        "MagicBUS",
-        "KittGaming",
-        "Sub2CaptainMaui",
-        "Sub2OfficialNoobie",
-        "TheGreatAce",
-        "Sub2NoobMaster123",
-        "Sub2Daigrock",
-        "Axiore",
-        "StrawHatMaine",
-        "TantaiGaming",
-        "Bluxxy",
-        "SUB2GAMERROBOT_EXP1",
+        "EASTEREXP","fudd10","fudd10_V2","Chandler","BIGNEWS",
+        "KITT_RESET","Sub2UncleKizaru","SUB2GAMERROBOT_RESET1",
+        "Sub2Fer999","Enyu_is_Pro","JCWK","StarcodeHEO","MagicBUS",
+        "KittGaming","Sub2CaptainMaui","Sub2OfficialNoobie","TheGreatAce",
+        "Sub2NoobMaster123","Sub2Daigrock","Axiore","StrawHatMaine",
+        "TantaiGaming","Bluxxy","SUB2GAMERROBOT_EXP1",
     }
-
     for _, code in ipairs(CODES) do
         pcall(function() Redeem:InvokeServer(code) end)
         task.wait(1.5)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- NO ANIMATION
--- ═══════════════════════════════════════════════════════════════
+-- No Animation
 task.spawn(function()
     if not (Spirit.Config and Spirit.Config.Extras and Spirit.Config.Extras.NoAnimation) then return end
     local function disable(char)
@@ -78,9 +53,7 @@ task.spawn(function()
     while task.wait(5) do pcall(disable, LocalPlayer.Character) end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO GACHA — rolls for a fruit when off cooldown and can afford it
--- ═══════════════════════════════════════════════════════════════
+-- Auto Gacha (opt-in)
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
     repeat task.wait(2) until LocalPlayer:FindFirstChild("Data")
@@ -109,114 +82,55 @@ task.spawn(function()
         return true, result
     end
 
-    -- States:
-    --   waiting_beli  → check every 30s if we can afford the roll
-    --   ready         → try Purchase once
-    --   cooldown      → wait until cooldown expires, then re-check
-    local state = "waiting_beli"
     local nextAttempt = os.time()
 
     while task.wait(5) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoGachaFruit then return end
+            if os.time() < nextAttempt then return end
 
-            if state == "cooldown" and os.time() < nextAttempt then
-                return
-            end
-            if state == "waiting_beli" and os.time() < nextAttempt then
-                return
-            end
-
-            -- Check gacha state first — this tells us if a roll is available
             local ok, checkResult = gachaCall("Check")
-            if not ok then
-                nextAttempt = os.time() + 60
-                return
-            end
+            if not ok then nextAttempt = os.time() + 60; return end
 
-            -- checkResult is expected to be a table; if it's got RequirementsMet, we can roll
             local canRoll = false
             if type(checkResult) == "table" then
-                if checkResult.RequirementsMet == true then
-                    canRoll = true
-                elseif checkResult.CanPurchase == true then
-                    canRoll = true
-                end
+                canRoll = (checkResult.RequirementsMet == true) or (checkResult.CanPurchase == true)
             end
-
             if not canRoll then
-                -- Either already rolled or not eligible — retry in 30 min
-                state = "cooldown"
                 nextAttempt = os.time() + (30 * 60)
-                Spirit.SetTask("SubTask", "Gacha: not available — retry in 30m")
                 return
             end
 
-            -- Make sure we have the Beli for it
             local minBeli = E.GachaMinBeli or 100000
-            local beli = (Spirit.ScriptStorage.PlayerData.Beli or 0)
-            if beli < minBeli then
-                state = "waiting_beli"
+            if (Spirit.ScriptStorage.PlayerData.Beli or 0) < minBeli then
                 nextAttempt = os.time() + 30
                 return
             end
 
-            -- Roll it
-            Spirit.SetTask("SubTask", "Gacha: rolling...")
-            local pok, presult = gachaCall("Purchase")
-            if not pok then
-                state = "cooldown"
+            local pok = gachaCall("Purchase")
+            if pok then
+                nextAttempt = os.time() + (6 * 60 * 60)
+                Spirit.SetTask("SubTask", "Gacha: rolled — cooldown 6h")
+            else
                 nextAttempt = os.time() + (10 * 60)
-                Spirit.SetTask("SubTask", "Gacha: purchase failed")
-                return
             end
-
-            -- Successful roll → long cooldown
-            state = "cooldown"
-            nextAttempt = os.time() + (6 * 60 * 60)   -- 6h safe assumption
-            Spirit.SetTask("SubTask", "Gacha: rolled — cooldown 6h")
-
-            -- Best-effort notification
-            pcall(function()
-                local fruitName = nil
-                if type(presult) == "table" then
-                    fruitName = presult.Fruit or presult.Name or presult.Result
-                end
-                Spirit.alert("Gacha", "Rolled" .. (fruitName and (": " .. tostring(fruitName)) or ""))
-            end)
         end)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO COLLECT FRUITS spawned in the workspace
--- ═══════════════════════════════════════════════════════════════
+-- Auto Collect Fruits (opt-in, combat-aware)
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
 
     local function isFruitModel(obj)
         if not obj or not obj.Parent then return false end
+        if obj:IsA("Tool") then return false end
         if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
-        local name = obj.Name
         local origName = obj:GetAttribute("OriginalName")
         if origName and tostring(origName):find("Fruit") then return true end
-        if tostring(name):find("Fruit") and not tostring(name):find("Fruit%") then
-            -- "Blox Fruit" tools we already hold shouldn't count
-            if obj:IsA("Tool") then return false end
-            return true
-        end
+        if tostring(obj.Name):find("Fruit") then return true end
         return false
-    end
-
-    local function findFruits()
-        local list = {}
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if isFruitModel(obj) then
-                table.insert(list, obj)
-            end
-        end
-        return list
     end
 
     local function collectFruit(fruit)
@@ -235,11 +149,9 @@ task.spawn(function()
         end
         if not target or not target.Position then return false end
 
-        -- Tween to fruit
         Spirit.TweenController.Create(CFrame.new(target.Position + Vector3.new(0, 3, 0)))
         task.wait(0.6)
 
-        -- Touch it
         pcall(function()
             if firetouchinterest then
                 firetouchinterest(hrp, target, 0)
@@ -248,7 +160,6 @@ task.spawn(function()
             end
         end)
 
-        -- Store it if the server didn't auto-pick-up
         task.wait(0.4)
         if fruit.Parent then
             local name = fruit:GetAttribute("OriginalName")
@@ -261,12 +172,34 @@ task.spawn(function()
         return true
     end
 
-    while task.wait(Spirit.Config.Extras.CollectInterval or 5) do
+    while task.wait(Spirit.Config.Extras.CollectInterval or 15) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoCollectFruit then return end
 
-            local fruits = findFruits()
+            if _G.FastAttack and (os.time() - _G.FastAttack) < 5 then return end
+            local sub = Spirit.ScriptStorage.Task and Spirit.ScriptStorage.Task.SubTask
+            if sub and (tostring(sub):find("Attack") or tostring(sub):find("attack")) then return end
+
+            local nearbyEnemy = false
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                for _, e in ipairs(workspace.Enemies:GetChildren()) do
+                    local er = e:FindFirstChild("HumanoidRootPart")
+                    local eh = e:FindFirstChild("Humanoid")
+                    if er and eh and eh.Health > 0
+                       and (er.Position - hrp.Position).Magnitude < 60 then
+                        nearbyEnemy = true
+                        break
+                    end
+                end
+            end
+            if nearbyEnemy then return end
+
+            local fruits = {}
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if isFruitModel(obj) then table.insert(fruits, obj) end
+            end
             if #fruits == 0 then return end
 
             Spirit.SetTask("SubTask", "Collecting " .. #fruits .. " fruit(s)")
@@ -277,14 +210,11 @@ task.spawn(function()
                     task.wait(0.3)
                 end
             end
-            Spirit.SetTask("SubTask", "Fruit collection done")
         end)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- VOid ATTACK (kept as before)
--- ═══════════════════════════════════════════════════════════════
+-- VOid ATTACK
 do
     local RS = ReplicatedStorage
     local Net = RS:WaitForChild("Modules"):WaitForChild("Net")
