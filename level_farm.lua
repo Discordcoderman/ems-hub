@@ -401,6 +401,8 @@ local LastAcceptAttempt = 0
 local LastAbandon = 0
 local LastDebug = 0
 local AtGiverSince = 0
+local AcceptFailCount = 0
+local LastDialogClick = 0
 
 local function mobMatches(guiMob, targetMob)
     if not guiMob or not targetMob then return false end
@@ -412,19 +414,63 @@ local function mobMatches(guiMob, targetMob)
     return false
 end
 
-local function rawScan()
+-- Click the dialog option whose text contains the target mob name.
+-- Blox Fruits NPCs with two quest tiers show a popup; the remote
+-- alone doesn't register the quest until the option is clicked.
+local function clickQuestDialog(targetMob)
+    if os.time() - LastDialogClick < 2 then return false end
+
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local main = pg and pg:FindFirstChild("Main")
-    if not main then return "no Main" end
-    for _, obj in ipairs(main:GetDescendants()) do
-        if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
-            local t = tostring(obj.Text)
-            if t:find("Defeat", 1, true) then
-                return t
+    if not pg then return false end
+
+    local function scanContainer(container)
+        for _, obj in ipairs(container:GetDescendants()) do
+            if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+                local txt = ""
+                if obj:IsA("TextButton") and obj.Text then
+                    txt = tostring(obj.Text)
+                end
+                for _, child in ipairs(obj:GetChildren()) do
+                    if child:IsA("TextLabel") and child.Text then
+                        txt = txt .. " " .. tostring(child.Text)
+                    end
+                end
+
+                if txt:find(targetMob, 1, true) then
+                    LastDialogClick = os.time()
+
+                    pcall(function() obj:Activate() end)
+                    if typeof(firesignal) == "function" then
+                        pcall(function() firesignal(obj.MouseButton1Click) end)
+                    end
+
+                    local pos = obj.AbsolutePosition + obj.AbsoluteSize / 2
+                    pcall(function()
+                        local VIM = game:GetService("VirtualInputManager")
+                        VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 1)
+                        task.wait(0.06)
+                        VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1)
+                    end)
+
+                    print("[LF] clicked dialog option for " .. targetMob)
+                    return true
+                end
             end
         end
+        return false
     end
-    return "no Defeat label"
+
+    for _, gui in ipairs(pg:GetChildren()) do
+        if scanContainer(gui) then return true end
+    end
+
+    local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if ok and coreGui then
+        for _, gui in ipairs(coreGui:GetChildren()) do
+            if scanContainer(gui) then return true end
+        end
+    end
+    return false
 end
 
 LF:RegisterMethod("Refresh", function()
@@ -467,6 +513,7 @@ LF:RegisterMethod("Start", function(step)
         LastAcceptAttempt = 0
         LastAbandon = 0
         AtGiverSince = 0
+        AcceptFailCount = 0
         pcall(function() Spirit.QuestController:Reset() end)
     end
 
@@ -475,21 +522,20 @@ LF:RegisterMethod("Start", function(step)
     local completedAt = controller and controller.JustCompletedAt or 0
     local justCompleted = (completedAt > 0) and (now - completedAt < 3)
 
-    if now - LastDebug > 3 then
+    if now - LastDebug > 5 then
         LastDebug = now
-        print(("[LF] lv=%d target=%s gui=%q raw=%q lastAccept=%ds ago"):format(
-            currentLevel, Q.Mon, tostring(guiMob), rawScan(),
-            now - LastAcceptAttempt))
+        print(("[LF] lv=%d target=%s gui=%q lastAccept=%ds ago fails=%d"):format(
+            currentLevel, Q.Mon, tostring(guiMob),
+            now - LastAcceptAttempt, AcceptFailCount))
     end
 
-    -- Case 1: GUI matches → attack
     if guiMob and mobMatches(guiMob, Q.NameMon) then
+        AcceptFailCount = 0
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
         Spirit.CombatController.Attack(Q.Mon)
         return
     end
 
-    -- Case 2: GUI shows wrong quest → abandon
     if guiMob then
         if now - LastAbandon > 5 then
             LastAbandon = now
@@ -501,13 +547,11 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- Case 3: GUI empty. Grace-window bypass on completion
     if not justCompleted and (now - LastAcceptAttempt < 5) then
         Spirit.SetTask("MainTask", "Level Farm | Waiting for quest GUI...")
         return
     end
 
-    -- Case 4: Walk to giver
     if not Q.PosQ then return end
     local dist = Spirit.CaculateDistance(Q.PosQ)
 
@@ -518,22 +562,28 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- Track time at giver
     if AtGiverSince == 0 then AtGiverSince = now end
 
-    -- Case 5: Fire StartQuest every 5s
+    clickQuestDialog(Q.NameMon)
+
     if now - LastAcceptAttempt > 5 then
         LastAcceptAttempt = now
+        AcceptFailCount = AcceptFailCount + 1
+
         local ok, res = pcall(function()
             return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
         end)
-        print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
-            tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
+        print(("[LF] StartQuest %s/%s → ok=%s res=%s (attempt %d)"):format(
+            tostring(Q.Qname), tostring(Q.Qdata),
+            tostring(ok), tostring(res), AcceptFailCount))
     end
 
-    -- Bypass: stuck at giver 8s with no GUI → attack anyway
-    if now - AtGiverSince > 8 then
-        print("[LF] stuck at giver 8s — attacking target anyway")
+    if AcceptFailCount >= 3 then
+        clickQuestDialog(Q.NameMon)
+    end
+
+    if now - AtGiverSince > 10 then
+        print("[LF] stuck at giver 10s — attacking target anyway")
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " (bypass)")
         Spirit.CombatController.Attack(Q.Mon)
         return
