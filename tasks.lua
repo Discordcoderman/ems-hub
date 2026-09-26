@@ -100,12 +100,9 @@ end
 
 -- ═══════════════════════════════════════════════════════════════
 -- TASK ORDER — first match wins
--- CollectDrops is first so fruit collection pauses farming.
--- CakePrinceTask is registered but not dispatched — mastery is
--- gained passively while LevelFarm attacks.
 -- ═══════════════════════════════════════════════════════════════
 Spirit.TasksOrder = {
-    "CollectDrops",          -- fruit priority
+    "CollectDrops",
 
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
@@ -128,6 +125,14 @@ Spirit.CurrentTask = nil
 
 function Spirit.RefreshTasksData()
     if _G.Stop then return end
+
+    -- ── Sea-transition gate ──
+    -- While sea.lua is running the Ice Admiral / Bartilo / rip_indra
+    -- chain, no task gets the dispatcher. Otherwise BossesTask,
+    -- SwordBossTask, MeleesController etc. call TweenController
+    -- against the transition's own tweens and the chain never lands.
+    -- Flag is set and cleared only by sea.lua.
+    if _G.SeaTransitionActive then return end
 
     for _, taskName in ipairs(Spirit.TasksOrder) do
         local handler = FunctionsHandler[taskName]
