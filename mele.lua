@@ -1,4 +1,4 @@
--- mele.lua — MeleesController + per-melee task handlers
+-- mele.lua — MeleesController + per-melee handlers
 local Spirit = getgenv().Spirit
 if not Spirit then error("[mele] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
@@ -92,7 +92,6 @@ MC:RegisterMethod("Start", function()
         local mst = owned and (ScriptStorage.Melees[m.name] or 0) or 0
 
         if not (owned and (m.target == 0 or mst >= m.target)) then
-
             if not owned then
                 if m.needMastery then
                     local pm = ScriptStorage.Melees[m.needMastery.item] or 0
@@ -199,16 +198,13 @@ MC:RegisterMethod("Start", function()
                 return
             end
 
-            -- ─── Owned, needs mastery. TRAIN IT. ───
+            -- Owned, needs mastery. Train it.
             SetTask("MainTask", "Auto Melee | Training " .. m.name .. " " .. mst .. "/" .. m.target)
-
-            -- Force combat to use this weapon
             _G.SelectWeapon = m.name
             pcall(function()
                 Spirit.FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(m.name)
             end)
 
-            -- Attack the current quest mob (keeps leveling while training melee)
             local mob = nil
             if Spirit.ManualLevelLookup then
                 local ok, lookup = pcall(Spirit.ManualLevelLookup)
@@ -225,7 +221,6 @@ MC:RegisterMethod("Start", function()
         end
     end
 
-    -- All at target — clear the weapon override so normal farming picks
     if _G.SelectWeapon and CheckItem(_G.SelectWeapon)
        and (ScriptStorage.Melees[_G.SelectWeapon] or 0) >= 400 then
         _G.SelectWeapon = nil
