@@ -389,7 +389,6 @@ function EmsUI.SetStats(data)
     end)
 end
 
--- Item ownership dots
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
@@ -411,7 +410,6 @@ task.spawn(function()
     end
 end)
 
--- Live stats + training melee tracker
 task.spawn(function()
     local start = os.time() - (Spirit.OldSessionTime or 0)
     while task.wait(1) do
@@ -433,7 +431,6 @@ task.spawn(function()
                 end
             end
 
-            -- Show the currently-training melee's mastery (first in order under target)
             local meleeStr = "—"
             for _, mm in ipairs(Spirit.MASTERY_TRAIN_ORDER or {}) do
                 local mst = Spirit.ScriptStorage.Melees[mm.name]
