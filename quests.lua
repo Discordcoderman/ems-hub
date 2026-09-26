@@ -100,81 +100,87 @@ function J.StartQuest(_self, questId, questIndex)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- GetCurrentClaimQuest — scan PlayerGui.Main for "Defeat N Mob"
+-- Broad GUI scan — walks every ScreenGui under PlayerGui,
+-- looking for any text that mentions "Defeat".
 -- ═══════════════════════════════════════════════════════════════
 local function parseQuestText(text)
+    -- Standard "Defeat 7 Snow Bandits" → "Snow Bandits"
     local mob = text:match("Defeat%s+%d+%s+(.-)%s*[%(%[]")
     if not mob then
         mob = text:match("Defeat%s+%d+%s+(.+)$")
     end
+    -- Fallback: any "N Name" pattern after "Defeat"
+    if not mob then
+        mob = text:match("Defeat%s+(%d+)%s+(.+)$")
+        if mob then mob = text:match("%d+%s+(.+)$") end
+    end
     if not mob or mob == "" then return nil end
     mob = mob:gsub("%s+$", "")
+    mob = mob:gsub("^%s+", "")
     return mob
 end
 
-function J.GetCurrentClaimQuest(_self)
+local function findQuestMob()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return nil end
-    local main = pg:FindFirstChild("Main")
-    if not main then return nil end
+    if not pg then return nil, "no PlayerGui" end
 
-    local standardFrame = main:FindFirstChild("Quest")
-    if standardFrame and standardFrame.Visible then
-        local container = standardFrame:FindFirstChild("Container")
-        local titleBox  = container
-                      and container:FindFirstChild("QuestTitle")
-                      and container.QuestTitle:FindFirstChild("Title")
-        if titleBox and titleBox.Text and titleBox.Text ~= "" then
-            local mob = parseQuestText(tostring(titleBox.Text))
-            if mob then return mob end
-        end
-    end
-
-    for _, obj in ipairs(main:GetDescendants()) do
-        if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
-            local text = tostring(obj.Text)
-            if text:find("Defeat", 1, true) then
-                local mob = parseQuestText(text)
-                if mob then return mob end
-            end
-        end
-    end
-
-    for _, altName in ipairs({"QuestHolder", "QuestTracker", "Quests", "QuestProgress"}) do
-        local alt = main:FindFirstChild(altName)
-        if alt then
-            for _, obj in ipairs(alt:GetDescendants()) do
-                if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
-                    local text = tostring(obj.Text)
-                    if text:find("Defeat", 1, true) then
-                        local mob = parseQuestText(text)
-                        if mob then return mob end
+    -- Pass 1: scan every ScreenGui, every TextLabel AND TextButton,
+    -- ignore Visibility (parent might be invisible while child text is set)
+    for _, gui in ipairs(pg:GetChildren()) do
+        if gui:IsA("ScreenGui") or gui:IsA("LayerCollector") then
+            for _, obj in ipairs(gui:GetDescendants()) do
+                if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Text and obj.Text ~= "" then
+                    local t = tostring(obj.Text)
+                    if t:find("Defeat", 1, true) then
+                        local mob = parseQuestText(t)
+                        if mob then
+                            return mob, t
+                        end
                     end
                 end
             end
         end
     end
 
-    return nil
+    -- Pass 2: CoreGui might hold it (some executor setups)
+    local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
+    if ok and coreGui then
+        for _, gui in ipairs(coreGui:GetChildren()) do
+            for _, obj in ipairs(gui:GetDescendants()) do
+                if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Text and obj.Text ~= "" then
+                    local t = tostring(obj.Text)
+                    if t:find("Defeat", 1, true) then
+                        local mob = parseQuestText(t)
+                        if mob then return mob, t end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, "no Defeat label"
+end
+
+function J.GetCurrentClaimQuest(_self)
+    return findQuestMob()
 end
 
 Spirit.GetCurrentClaimQuest = function()
     return J.GetCurrentClaimQuest(J)
 end
 
+Spirit.DebugQuestScan = findQuestMob
+
 -- ═══════════════════════════════════════════════════════════════
--- QuestController — hooks QuestUpdate remote, tracks active quest
--- AND completion via Context = "Complete" payloads.
+-- QuestController — hooked to QuestUpdate remote, tracks
+-- active quest + completion state.
 -- ═══════════════════════════════════════════════════════════════
 local QuestController = {
     CurrentQuest = "",
     CurrentQuestName = "",
-
-    -- Set the moment the server fires Context = "Complete"
     JustCompletedAt = 0,
     JustCompletedName = "",
     JustCompletedQuest = "",
-
     QuestConnection = nil,
 }
 Spirit.QuestController = QuestController
@@ -194,16 +200,11 @@ function QuestController:Reset()
     self.CurrentQuestName = ""
 end
 
--- Handle a remote payload. Accepts either a single table or (a, b) pair.
--- Returns true if handled.
 local function handleQuestPayload(...)
     local args = {...}
     local tbl = nil
-
-    -- Unwrap: payload may be table directly, or (nil, table), or (table, extra)
     for _, arg in ipairs(args) do
         if type(arg) == "table" then
-            -- Prefer the one with quest fields
             if arg.InternalQuestName or arg.Context or arg.Name then
                 tbl = arg
                 break
@@ -217,7 +218,6 @@ local function handleQuestPayload(...)
         return false
     end
 
-    -- Completion event — server says the quest is done
     if tbl.Context == "Complete" then
         QuestController.JustCompletedAt   = os.time()
         QuestController.JustCompletedName = tbl.Name or ""
@@ -228,7 +228,6 @@ local function handleQuestPayload(...)
         return true
     end
 
-    -- Active quest event
     if tbl.InternalQuestName then
         QuestController:Set(tbl)
         return true
