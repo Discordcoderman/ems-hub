@@ -51,6 +51,7 @@ task.spawn(function()
     while task.wait(5) do pcall(disable, LocalPlayer.Character) end
 end)
 
+-- Auto Gacha (opt-in)
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
     repeat task.wait(2) until LocalPlayer:FindFirstChild("Data")
@@ -98,21 +99,15 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- Auto Collect Fruits — every 60s
+-- Auto Collect Fruits — every 60s, only models with FruitAnimator
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
 
     local function isFruitModel(obj)
         if not obj or not obj.Parent then return false end
-        if obj:IsA("Tool") then return false end
-        if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
-        local name = tostring(obj.Name)
-        if name:match("%[.-%]%s*Fruit") then return true end
-        if name:find("Fruit", 1, true) then return true end
-        local origName = obj:GetAttribute("OriginalName")
-        if origName and tostring(origName):find("Fruit") then return true end
-        return false
+        if not obj:IsA("Model") then return false end
+        return obj:FindFirstChild("FruitAnimator") ~= nil
     end
 
     local function collectFruit(fruit)
@@ -120,15 +115,12 @@ task.spawn(function()
         if not char then return false end
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
-        local target
-        if fruit:IsA("Model") then
-            target = fruit:FindFirstChild("HumanoidRootPart")
-                  or fruit.PrimaryPart
-                  or fruit:FindFirstChildWhichIsA("BasePart")
-        else
-            target = fruit
-        end
+
+        local target = fruit:FindFirstChild("Handle")
+                    or fruit.PrimaryPart
+                    or fruit:FindFirstChildWhichIsA("BasePart")
         if not target or not target.Position then return false end
+
         Spirit.TweenController.Create(CFrame.new(target.Position + Vector3.new(0, 3, 0)))
         task.wait(0.6)
         pcall(function()
@@ -141,7 +133,7 @@ task.spawn(function()
         task.wait(0.4)
         if fruit.Parent then
             local name = fruit:GetAttribute("OriginalName")
-                       or (fruit:IsA("Model") and fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
+                       or (fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
                        or fruit.Name
             pcall(function() Spirit.Remotes.CommF_:InvokeServer("StoreFruit", name, fruit) end)
         end
@@ -152,6 +144,10 @@ task.spawn(function()
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoCollectFruit then return end
+
+            if _G.FastAttack and (os.time() - _G.FastAttack) < 5 then return end
+            local sub = Spirit.ScriptStorage.Task and Spirit.ScriptStorage.Task.SubTask
+            if sub and (tostring(sub):find("Attack") or tostring(sub):find("attack")) then return end
 
             local nearbyEnemy = false
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
@@ -174,7 +170,7 @@ task.spawn(function()
             end
             if #fruits == 0 then return end
 
-            Spirit.SetTask("SubTask", "Collecting " .. #fruits .. " fruit(s)")
+            print(("[fruits] found %d collectable fruit(s)"):format(#fruits))
             for _, f in ipairs(fruits) do
                 if _G.Stop then return end
                 if f.Parent then
