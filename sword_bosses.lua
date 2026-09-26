@@ -7,15 +7,21 @@ local ScriptStorage = Spirit.ScriptStorage
 local SetTask       = Spirit.SetTask
 local CheckItem     = Spirit.CheckItem
 
+-- Player-level requirement per boss. The old values were wrong —
+-- everything had 100 or 800, so level-233 players would target
+-- Thunder God (a level-575 boss) and stall the entire task on
+-- "Mob HP unchanged 60s". Correct values come from data.lua's
+-- BossList (Sea 1 / 2 / 3 boss level requirement).
 local LIST = {
+    -- Sword                Boss name                 Sea  Player-level required
     {sword = "Shark Saw",       boss = "The Saw",              sea = 1, level = 100},
-    {sword = "Wardens Sword",   boss = "Chief Warden",         sea = 1, level = 100},
-    {sword = "Pole (1st Form)", boss = "Thunder God",          sea = 1, level = 100},
-    {sword = "Gravity Blade",   boss = "Orbitus",              sea = 2, level = 800},
-    {sword = "Longsword",       boss = "Diamond",              sea = 2, level = 800},
-    {sword = "Rengoku",         boss = "Awakened Ice Admiral", sea = 2, level = 800},
-    {sword = "Flail",           boss = "Smoke Admiral",        sea = 2, level = 0},
-    {sword = "Twin Hooks",      boss = "Captain Elephant",     sea = 3, level = 0},
+    {sword = "Wardens Sword",   boss = "Chief Warden",         sea = 1, level = 230},
+    {sword = "Pole (1st Form)", boss = "Thunder God",          sea = 1, level = 575},
+    {sword = "Gravity Blade",   boss = "Orbitus",              sea = 2, level = 925},
+    {sword = "Longsword",       boss = "Diamond",              sea = 2, level = 750},
+    {sword = "Rengoku",         boss = "Awakened Ice Admiral", sea = 2, level = 1400},
+    {sword = "Flail",           boss = "Smoke Admiral",        sea = 2, level = 1150},
+    {sword = "Twin Hooks",      boss = "Captain Elephant",     sea = 3, level = 1875},
 }
 
 local HIDDEN_KEY_CF  = CFrame.new(6572.29248, 295.712677, -6966.09961)
@@ -35,6 +41,8 @@ SWB:RegisterMethod("Refresh", function()
             end
         end
     end
+
+    -- Rengoku via Hidden/Library Key (doesn't need the boss alive)
     local cfg = Spirit.Config and Spirit.Config.Sword
     if cfg and cfg["Rengoku"] and not CheckItem("Rengoku") and Spirit.SeaIndex == 2 then
         if CheckItem("Hidden Key") or CheckItem("Library Key") then
@@ -46,6 +54,7 @@ end)
 
 SWB:RegisterMethod("Start", function(sw)
     if not sw then return end
+
     if sw.useKey then
         local keyName = CheckItem("Hidden Key") and "Hidden Key" or "Library Key"
         local cf = keyName == "Hidden Key" and HIDDEN_KEY_CF or LIBRARY_KEY_CF
