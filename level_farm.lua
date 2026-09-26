@@ -425,7 +425,6 @@ LF:RegisterMethod("Start", function(step)
     if step == 2 or step == 3 then
         local mobName = (step == 2) and "Shanda" or "God's Guard"
         local skyCF = (step == 2) and CFrame.new(-7894, 5547, -380) or CFrame.new(-4650, 872, -1775)
-
         if Spirit.SeaIndex == 1 then
             local loc = LocalPlayer:GetAttribute("CurrentLocation")
             if not loc or (loc ~= "Skylands" and loc ~= "Upper Skylands") then
@@ -434,9 +433,7 @@ LF:RegisterMethod("Start", function(step)
                 return
             end
         end
-
         Spirit.SetTask("MainTask", "Level Farm | " .. mobName .. " | Skylands")
-
         for _, folder in ipairs({Workspace.Enemies, ReplicatedStorage}) do
             for _, v in ipairs(folder:GetChildren()) do
                 if v.Name == mobName and v:IsA("Model") then
@@ -471,7 +468,7 @@ LF:RegisterMethod("Start", function(step)
 
         if not matches then
             Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(guiMob))
-            if os.time() - LastStartQuest > 3 then
+            if os.time() - LastStartQuest > 4 then
                 LastStartQuest = os.time()
                 Spirit.J.AbandonQuest(Spirit.J)
             end
@@ -492,20 +489,15 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    if os.time() - LastStartQuest < 4 then return end
-    LastStartQuest = os.time()
+    local now = os.time()
+    if now - LastStartQuest < 8 then
+        Spirit.SetTask("MainTask", "Level Farm | Waiting for " .. Q.Mon .. " quest to register")
+        return
+    end
+    LastStartQuest = now
 
     Spirit.SetTask("MainTask", "Level Farm | Accepting " .. Q.Mon .. " quest")
     Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-    task.wait(2)
-
-    local newMob, _ = Spirit.GetCurrentClaimQuest()
-    if newMob then
-        Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accepted")
-        Spirit.CombatController.Attack(Q.Mon)
-    else
-        Spirit.SetTask("MainTask", "Level Farm | Waiting for " .. Q.Mon .. " quest to register...")
-    end
 end)
 
 Spirit.__level_farm_ready = true
