@@ -1,4 +1,4 @@
--- extras.lua — Redeem, no-anim, auto-gacha (opt-in), auto-collect (opt-in), VOid attack
+-- extras.lua — Redeem, no-anim, auto-gacha, auto-collect, VOid attack
 local Spirit = getgenv().Spirit
 if not Spirit then error("[extras] core.lua not loaded") end
 
@@ -11,11 +11,10 @@ if Spirit.Config then
     local E = Spirit.Config.Extras
     if E.AutoGachaFruit   == nil then E.AutoGachaFruit   = false end
     if E.GachaMinBeli     == nil then E.GachaMinBeli     = 100000 end
-    if E.AutoCollectFruit == nil then E.AutoCollectFruit = false end
-    if E.CollectInterval  == nil then E.CollectInterval  = 15 end
+    if E.AutoCollectFruit == nil then E.AutoCollectFruit = true end
+    if E.CollectInterval  == nil then E.CollectInterval  = 10 end
 end
 
--- Auto Redeem
 task.spawn(function()
     local Remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
     local Redeem = Remotes and Remotes:WaitForChild("Redeem", 30)
@@ -34,7 +33,6 @@ task.spawn(function()
     end
 end)
 
--- No Animation
 task.spawn(function()
     if not (Spirit.Config and Spirit.Config.Extras and Spirit.Config.Extras.NoAnimation) then return end
     local function disable(char)
@@ -57,7 +55,6 @@ end)
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
     repeat task.wait(2) until LocalPlayer:FindFirstChild("Data")
-
     local GachaRF
     local function getGacha()
         if GachaRF and GachaRF.Parent then return GachaRF end
@@ -67,59 +64,41 @@ task.spawn(function()
         if ok and rf then GachaRF = rf end
         return GachaRF
     end
-
-    local function gachaCall(context)
+    local function gachaCall(ctx)
         local rf = getGacha()
         if not rf then return false, "no remote" end
         local ok, result = pcall(function()
-            return rf:InvokeServer({
-                SpokeNPC = "Blox Fruit Gacha",
-                Context  = context,
-                BoxName  = "ZiolesGacha",
-            })
+            return rf:InvokeServer({ SpokeNPC = "Blox Fruit Gacha", Context = ctx, BoxName = "ZiolesGacha" })
         end)
         if not ok then return false, tostring(result) end
         return true, result
     end
-
     local nextAttempt = os.time()
-
     while task.wait(5) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoGachaFruit then return end
             if os.time() < nextAttempt then return end
-
             local ok, checkResult = gachaCall("Check")
             if not ok then nextAttempt = os.time() + 60; return end
-
             local canRoll = false
             if type(checkResult) == "table" then
                 canRoll = (checkResult.RequirementsMet == true) or (checkResult.CanPurchase == true)
             end
-            if not canRoll then
-                nextAttempt = os.time() + (30 * 60)
-                return
-            end
-
+            if not canRoll then nextAttempt = os.time() + (30 * 60); return end
             local minBeli = E.GachaMinBeli or 100000
             if (Spirit.ScriptStorage.PlayerData.Beli or 0) < minBeli then
                 nextAttempt = os.time() + 30
                 return
             end
-
             local pok = gachaCall("Purchase")
-            if pok then
-                nextAttempt = os.time() + (6 * 60 * 60)
-                Spirit.SetTask("SubTask", "Gacha: rolled — cooldown 6h")
-            else
-                nextAttempt = os.time() + (10 * 60)
-            end
+            if pok then nextAttempt = os.time() + (6 * 60 * 60)
+            else nextAttempt = os.time() + (10 * 60) end
         end)
     end
 end)
 
--- Auto Collect Fruits (opt-in, combat-aware)
+-- Auto Collect Fruits (combat-aware, interval-driven)
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
 
@@ -138,7 +117,6 @@ task.spawn(function()
         if not char then return false end
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return false end
-
         local target
         if fruit:IsA("Model") then
             target = fruit:FindFirstChild("HumanoidRootPart")
@@ -148,10 +126,8 @@ task.spawn(function()
             target = fruit
         end
         if not target or not target.Position then return false end
-
         Spirit.TweenController.Create(CFrame.new(target.Position + Vector3.new(0, 3, 0)))
         task.wait(0.6)
-
         pcall(function()
             if firetouchinterest then
                 firetouchinterest(hrp, target, 0)
@@ -159,28 +135,27 @@ task.spawn(function()
                 firetouchinterest(hrp, target, 1)
             end
         end)
-
         task.wait(0.4)
         if fruit.Parent then
             local name = fruit:GetAttribute("OriginalName")
                        or (fruit:IsA("Model") and fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
                        or fruit.Name
-            pcall(function()
-                Spirit.Remotes.CommF_:InvokeServer("StoreFruit", name, fruit)
-            end)
+            pcall(function() Spirit.Remotes.CommF_:InvokeServer("StoreFruit", name, fruit) end)
         end
         return true
     end
 
-    while task.wait(Spirit.Config.Extras.CollectInterval or 15) do
+    while task.wait(Spirit.Config.Extras.CollectInterval or 10) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoCollectFruit then return end
 
-            if _G.FastAttack and (os.time() - _G.FastAttack) < 5 then return end
+            -- Skip if actively fighting (FastAttack in last 3s)
+            if _G.FastAttack and (os.time() - _G.FastAttack) < 3 then return end
             local sub = Spirit.ScriptStorage.Task and Spirit.ScriptStorage.Task.SubTask
             if sub and (tostring(sub):find("Attack") or tostring(sub):find("attack")) then return end
 
+            -- Skip if a live enemy is within 60 studs
             local nearbyEnemy = false
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
@@ -220,20 +195,18 @@ do
     local Net = RS:WaitForChild("Modules"):WaitForChild("Net")
     local RE_RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
     local RE_RegisterHit = Net:WaitForChild("RE/RegisterHit")
-
     getgenv().VOidAttack = getgenv().VOidAttack or {}
     local CFG = getgenv().VOidAttack
-    CFG.Enabled       = CFG.Enabled       ~= false
-    CFG.Range         = CFG.Range         or 90
+    CFG.Enabled = CFG.Enabled ~= false
+    CFG.Range = CFG.Range or 90
     CFG.AttackPlayers = CFG.AttackPlayers ~= false
-    CFG.AttackMobs    = CFG.AttackMobs    ~= false
-    CFG.LoopDelay     = CFG.LoopDelay     or 0.01
+    CFG.AttackMobs = CFG.AttackMobs ~= false
+    CFG.LoopDelay = CFG.LoopDelay or 0.01
 
     local function isAlive(m)
         local h = m and m:FindFirstChildOfClass("Humanoid")
         return h and h.Health > 0
     end
-
     local function collectTargets(char)
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return {} end
@@ -250,11 +223,10 @@ do
                 end
             end
         end
-        if CFG.AttackMobs    then scan(workspace:FindFirstChild("Enemies"))    end
+        if CFG.AttackMobs then scan(workspace:FindFirstChild("Enemies")) end
         if CFG.AttackPlayers then scan(workspace:FindFirstChild("Characters")) end
         return list
     end
-
     local function fire(targets)
         local c = {}
         for _, e in ipairs(targets) do
@@ -267,7 +239,6 @@ do
         RE_RegisterAttack:FireServer(0)
         RE_RegisterHit:FireServer(primary, c)
     end
-
     task.spawn(function()
         while task.wait(CFG.LoopDelay) do
             if not CFG.Enabled then continue end
@@ -282,7 +253,6 @@ do
             end
         end
     end)
-
     Spirit.VOidAttack = CFG
 end
 
