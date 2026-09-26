@@ -1,8 +1,4 @@
 -- level_farm.lua — LevelFarm with UW + Sky teleport routing
--- Upper sky (God's Guard, Shanda, Royal Squad, Royal Soldier) and
--- lower sky (Sky Bandit, Dark Master) are separated by a vertical
--- gap the tween can't cross reliably. Route via requestEntrance for
--- both directions.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -16,30 +12,25 @@ local Remotes           = Spirit.Remotes
 
 -- ═══════════════════════════════════════════════════════════════
 -- SKY ROUTING
--- Zone is decided by Y:
---   upper = Y >= 3000  (God's Guard + everything above)
---   lower = 300 <= Y < 3000  (Sky Bandit, Dark Master)
---   ground = Y < 300
--- Two directions matter:
---   anything → upper: requestEntrance SKY_UPPER_ENTRY
---   upper → lower:   requestEntrance SKY_LOWER_ENTRY
--- Lower → ground and ground → lower just fly normally.
+-- Upper sky: Y >= 3000. Lower sky: 200 <= Y < 3000. Ground: Y < 200.
+-- requestEntrance does a server-side teleport — no tween. The
+-- SkyTransitionActive flag holds the dispatcher + attack loop while
+-- the server moves us, and cancels any in-flight tween on the block.
 -- ═══════════════════════════════════════════════════════════════
 local SKY_UPPER_ENTRY = Vector3.new(-6023.57666015625, 5469.7197265625, 2203.308349609375)
 local SKY_LOWER_ENTRY = Vector3.new(-4166.60986328125, 1093.697998046875, -347.16226196289062)
-local SKY_TRIGGER_COOLDOWN = 4
+local SKY_TRIGGER_COOLDOWN = 5
+local SKY_HOLD_TIME        = 3
 
 local skyState = {lastTrigger = 0}
 
 local function skyZoneOf(pos)
     if not pos then return "ground" end
     if pos.Y >= 3000 then return "upper" end
-    if pos.Y >= 300  then return "lower" end
+    if pos.Y >= 200  then return "lower" end
     return "ground"
 end
 
--- Returns true when a sky teleport was issued and the caller should
--- skip the rest of the tick.
 local function ensureSkyPath(destCF)
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return false end
@@ -49,31 +40,43 @@ local function ensureSkyPath(destCF)
 
     if destZone == playerZone then return false end
 
-    local needUpper = (destZone == "upper" and playerZone ~= "upper")
-    local needLower = (destZone == "lower" and playerZone == "upper")
-
-    if not (needUpper or needLower) then return false end
+    local entry
+    if destZone == "upper" and playerZone ~= "upper" then
+        entry = SKY_UPPER_ENTRY
+    elseif playerZone == "upper" and destZone ~= "upper" then
+        entry = SKY_LOWER_ENTRY
+    else
+        return false
+    end
 
     if tick() - skyState.lastTrigger < SKY_TRIGGER_COOLDOWN then
         return true
     end
     skyState.lastTrigger = tick()
 
-    local entry = needUpper and SKY_UPPER_ENTRY or SKY_LOWER_ENTRY
+    _G.SkyTransitionActive = true
+
+    if Spirit.TweenInstance then
+        pcall(function() Spirit.TweenInstance:Cancel() end)
+    end
+    Spirit.shouldTween = false
+
     Spirit.SetTask("MainTask", "Level Farm | Sky teleport — "
-        .. (needUpper and "Upper" or "Lower"))
+        .. (entry == SKY_UPPER_ENTRY and "Upper" or "Lower"))
 
     pcall(function()
         Remotes.CommF_:InvokeServer("requestEntrance", entry)
     end)
-    task.wait(1.5)
+
+    task.delay(SKY_HOLD_TIME, function()
+        _G.SkyTransitionActive = false
+    end)
+
     return true
 end
 
 -- ═══════════════════════════════════════════════════════════════
 -- UNDERWATER CITY ROUTING
--- Zone boundary is X = 50000. Entrance at (4047, -4, -1814),
--- exit at (61172, -4, 1946).
 -- ═══════════════════════════════════════════════════════════════
 local UW_ENTRANCE_CF = CFrame.new(4047.98, -4.00, -1814.70)
 local UW_EXIT_CF     = CFrame.new(61172.18, -4.00, 1946.88)
@@ -653,6 +656,7 @@ end
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
     if _G.FruitPriorityActive then return nil end
+    if _G.SkyTransitionActive then return nil end
     return 4
 end)
 
@@ -681,12 +685,10 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- SKY ROUTING — runs first. If the tier is in a different sky zone
-    -- than the player, requestEntrance handles the teleport and we
-    -- skip the rest of the tick.
+    -- SKY ROUTING — runs first. requestEntrance for sky transitions.
     if Q.PosQ and ensureSkyPath(Q.PosQ) then return end
 
-    -- UW ROUTING — same shape for the underwater city boundary.
+    -- UW ROUTING — for the underwater city boundary.
     if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
 
     local now = os.time()
