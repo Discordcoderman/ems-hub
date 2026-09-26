@@ -1,9 +1,4 @@
--- combat.lua
--- CombatController, BringEnemy, fast-attack, CheckItem.
--- Load order: after tween.lua, before any task module.
--- Publishes: Spirit.CombatController, Spirit.CheckItem, Spirit.BringEnemy,
---            Spirit.FastAttackReady, Spirit.LockAimPositionTo.
-
+-- combat.lua — CombatController, BringEnemy, fast-attack, CheckItem
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
@@ -15,9 +10,7 @@ local LocalPlayer   = Spirit.LocalPlayer
 local ScriptStorage = Spirit.ScriptStorage
 local Remotes       = Spirit.Remotes
 
--- ═══════════════════════════════════════════════════════════════
--- 1. CHECKITEM — universal inventory lookup
--- ═══════════════════════════════════════════════════════════════
+-- ═══ CheckItem ═══
 local function CheckItem(itemName)
     if not itemName then return false end
     local bp = LocalPlayer:FindFirstChild("Backpack")
@@ -40,10 +33,7 @@ local function CheckItem(itemName)
 end
 Spirit.CheckItem = CheckItem
 
--- ═══════════════════════════════════════════════════════════════
--- 2. FAST-ATTACK CORE (W:Attack)
--- Fires RegisterAttack + RegisterHit with per-limb hitboxes.
--- ═══════════════════════════════════════════════════════════════
+-- ═══ FastAttack ═══
 local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
 local RE_RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
 local RE_RegisterHit    = Net:WaitForChild("RE/RegisterHit")
@@ -81,10 +71,6 @@ local function Getplayerhit()
     return hits
 end
 
-local NetReq = require(ReplicatedStorage.Modules.Net)
-local RegisterAttackEvent = NetReq:RemoteEvent("RegisterAttack", true)
-local RegisterHitEvent    = NetReq:RemoteEvent("RegisterHit", true)
-
 local FastAttack = {}
 function FastAttack:Attack()
     local targets = {}
@@ -94,17 +80,16 @@ function FastAttack:Attack()
 
     local payload = {[1] = nil, [2] = {}, [4] = "078da5141"}
     for _, target in ipairs(targets) do
-        RegisterAttackEvent:FireServer(0)
+        RE_RegisterAttack:FireServer(0)
         if not payload[1] then
             payload[1] = target:FindFirstChild("Head") or target:FindFirstChild("HumanoidRootPart")
         end
         table.insert(payload[2], {[1] = target, [2] = target.HumanoidRootPart})
         table.insert(payload[2], target)
     end
-    RegisterHitEvent:FireServer(unpack(payload))
+    RE_RegisterHit:FireServer(unpack(payload))
 end
 
--- Fast-attack pump — fires when _G.FastAttack == os.time()
 task.spawn(function()
     while task.wait(0.06) do
         if _G.FastAttack == os.time() then
@@ -113,26 +98,19 @@ task.spawn(function()
     end
 end)
 
--- Trigger used by CombatController.Attack: sets _G.FastAttack to "now"
 local W_Attack = {}
-function W_Attack.Attack(_target)
-    pcall(function() _G.FastAttack = os.time() end)
-end
+function W_Attack.Attack(_) pcall(function() _G.FastAttack = os.time() end) end
 Spirit.W_Attack = W_Attack
 Spirit.FastAttackReady = FastAttack
 
--- ═══════════════════════════════════════════════════════════════
--- 3. LOCK AIM (used by fruit-mastery burst)
--- ═══════════════════════════════════════════════════════════════
+-- ═══ Aim lock ═══
 local _aimLock = nil
 function Spirit.LockAimPositionTo(pos)
     _aimLock = pos
     task.delay(0.5, function() _aimLock = nil end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- 4. COMBAT CONTROLLER
--- ═══════════════════════════════════════════════════════════════
+-- ═══ CombatController ═══
 local CombatController = {
     GRAB = false,
     GRAB_DISTANCE = (Spirit.SeaIndex == 1) and 250 or 350,
@@ -146,11 +124,8 @@ Spirit.CombatController = CombatController
 local LastFound    = os.time()
 local LastFire12   = 0
 local GrabDebounce = 0
-local LevelFarmTTL = 0
-local LastTravel   = os.time()
 Spirit.LastFound   = LastFound
 
--- ─── Search: pick nearest mob matching name list ────────────────
 local function Sort1(entity)
     if not entity or not entity:FindFirstChild("HumanoidRootPart") then return math.huge end
     return math.floor(Spirit.CaculateDistance(entity.HumanoidRootPart.CFrame))
@@ -172,14 +147,13 @@ function CombatController.Search(names)
     table.sort(candidates, function(a, b) return Sort1(a) < Sort1(b) end)
     if anyFound and candidates[1] then return candidates[1] end
 
-    -- Fallback: look in ReplicatedStorage
     for _, npcName in ipairs(names) do
         local npc = ReplicatedStorage:FindFirstChild(npcName)
         if npc then return npc end
     end
 end
 
--- ─── Grab: pull same-name mobs near MonResult into one pile ─────
+-- ═══ GRAB — pull same-name mobs near MonResult into one pile ═══
 function CombatController.Grab(mobName)
     pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
     if not CombatController.GRAB then return end
@@ -207,8 +181,7 @@ function CombatController.Grab(mobName)
                         bv.Parent = root
                     end
                     if dist <= 10 then AreaMob = true end
-                    if not AreaMob
-                       and (not isnetworkowner or pcall(isnetworkowner, root)) then
+                    if not AreaMob and (not isnetworkowner or pcall(isnetworkowner, root)) then
                         root.CFrame = MonResult.HumanoidRootPart.CFrame
                     end
                     enemy:SetAttribute("IsGrabbed", true)
@@ -218,39 +191,27 @@ function CombatController.Grab(mobName)
     end
 end
 
--- ─── Equip helper (dynamic — FunctionsHandler loads later) ──────
 local function EquipToolDynamic(toolName)
     local FH = Spirit.FunctionsHandler
-    if FH and FH.LocalPlayerController
-       and FH.LocalPlayerController.Methods
+    if FH and FH.LocalPlayerController and FH.LocalPlayerController.Methods
        and FH.LocalPlayerController.Methods.EquipTool then
         FH.LocalPlayerController.Methods.EquipTool:Call(toolName)
     end
 end
 Spirit.EquipToolDynamic = EquipToolDynamic
 
--- ─── Sweet Chalice combat-guard ─────────────────────────────────
 local function SweetChaliceInCombat()
     local tool = ScriptStorage.Tools["Sweet Chalice"]
     if not tool then return false end
-    local ok, guide = pcall(function()
-        return getsenv(ReplicatedStorage.GuideModule)
-    end)
+    local ok, guide = pcall(function() return getsenv(ReplicatedStorage.GuideModule) end)
     if not ok or not guide or not guide._G then return false end
     return guide._G.InCombat and true or false
 end
 
--- ─── Main attack loop ───────────────────────────────────────────
--- Signature: Attack(names, forceNear, forceDist, callback)
---   names    = string or table of mob names
---   forceNear = if truthy, ignore name and target nearest mob within forceDist
---   forceDist = distance ceiling for forceNear mode
---   callback  = optional function whose return is passed through
+-- ═══ Main Attack loop ═══
 function CombatController.Attack(names, forceNear, forceDist, callback)
     if SweetChaliceInCombat() then
-        pcall(function()
-            if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end
-        end)
+        pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
         return
     end
 
@@ -260,7 +221,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
     for _, rawName in ipairs(names) do
         local nameStr = tostring(rawName)
 
-        -- Elite-hunter side-effect for elite bosses
         if (nameStr == "Deandre" or nameStr == "Urban"
             or (nameStr == "Diablo" and (os.time() - (LastFire12 or 0)) > 180)) then
             LastFire12 = os.time()
@@ -283,7 +243,7 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
         if MonResult then
             LastFound = os.time()
             Spirit.LastFound = LastFound
-            local attackStart = 0
+            local attackStart = os.time()
             local unchangedStart = os.time()
             Spirit.SetTask("SubTask", "Attacking " .. tostring(MonResult.Name))
 
@@ -291,9 +251,7 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
                 if _G.Stop then return end
 
                 if SweetChaliceInCombat() then
-                    pcall(function()
-                        if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end
-                    end)
+                    pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
                     return
                 end
 
@@ -302,30 +260,24 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
                 if not hum or hum.Health <= 0 then break end
                 if not hrp then break end
 
-                -- Hover directly over the mob
                 Spirit.TweenController.Create(Spirit.HoverOver(hrp.Position, 35))
 
                 if Spirit.CaculateDistance(hrp.Position + Vector3.new(0, 35, 0)) < 150 then
-                    if callback then
-                        local ok = pcall(callback)
-                        if not ok then end
-                    end
+                    if callback then pcall(callback) end
 
                     CombatController.Grab(names[1] or "")
 
                     if MonResult.Name ~= "Core" then
-                        -- Health-unchanged → hop
                         if ScriptStorage.PlayerData.Level > 100
                            and (os.time() - unchangedStart) >= CombatController.MAX_ATTACK_DURATION_2
                            and (hum.Health - hum.MaxHealth == 0) then
                             Spirit.SetTask("SubTask",
-                                "Hop Server - Mob Health Unchanged (" .. hum.Health .. " / " .. hum.MaxHealth .. ")")
+                                "Hop - mob health unchanged (" .. hum.Health .. "/" .. hum.MaxHealth .. ")")
                             Spirit.alert("stuck", "Mob health unchanged")
                             _G.Stop = true
                             ReplicatedStorage.__ServerBrowser:InvokeServer("teleport", game.JobId)
                         end
 
-                        -- Failure-count return-to-old-pos
                         if (os.time() - attackStart) >= CombatController.MAX_ATTACK_DURATION
                            and (hum.Health - hum.MaxHealth == 0) then
                             attackStart = os.time()
@@ -335,8 +287,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
                                 MonResult:SetAttribute("IgnoreGrab", true)
                                 MonResult:SetAttribute("FailureCount",
                                     (MonResult:GetAttribute("FailureCount") or 0) + 1)
-                                Spirit.alert("Failed to attack",
-                                    "Returning to old position (#" .. MonResult:GetAttribute("FailureCount") .. ")")
                                 MonResult.HumanoidRootPart.CFrame = CFrame.new(oldPos)
                                 task.wait()
                                 return
@@ -344,7 +294,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
                         end
                     end
 
-                    -- Fruit-mastery burst
                     local FarmFruitMastery = getgenv().FarmFruitMastery
                     local raidIsland = Spirit.FunctionsHandler
                         and Spirit.FunctionsHandler.RaidController
@@ -362,14 +311,11 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
                         local keys = {"Z", "X", "C", "V"}
                         Spirit.SendKey(keys[math.random(1, #keys)], 0.31)
                     else
-                        -- Prefer selected weapon, else fallback
                         local selected = _G.SelectWeapon
                         if selected and CheckItem(selected) then
                             EquipToolDynamic(selected)
                         else
-                            EquipToolDynamic(
-                                ScriptStorage.ForceToUseSword and "Sword" or "Melee"
-                            )
+                            EquipToolDynamic(ScriptStorage.ForceToUseSword and "Sword" or "Melee")
                         end
                     end
 
@@ -377,21 +323,11 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 
                     if os.time() ~= unchangedStart then
                         unchangedStart = os.time()
-                        attackStart = (attackStart == 0) and os.time() or attackStart
-                    end
-
-                    -- Safety bailout
-                    if attackStart > 0
-                       and (os.time() - attackStart) > 30
-                       and MonResult.Name ~= "Core" then
-                        Spirit.alert("Took more than 30s to attack, canceling")
-                        break
                     end
                 end
             end
 
         elseif not forceNear then
-            -- No mob found → either error-out or tween to spawn region
             if (os.time() - LastFound) > 200 then
                 Spirit.alert("MeyyHub", "Error while farming, rejoin")
                 ReplicatedStorage.__ServerBrowser:InvokeServer("teleport", game.JobId)
@@ -424,18 +360,32 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- 5. BRING ENEMY (lock mobs at a point)
+-- BRING ENEMY — anchored lock (no more fall-through)
 -- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 Spirit.PosMon = Spirit.PosMon or nil
 Spirit.Mon    = Spirit.Mon    or nil
 
+local lockedMobs = {}   -- [model] = true, so we can unlock them when bring turns off
+
 local function LockMobToCF(v, hrp, hum, pinCF)
-    hrp.CFrame     = pinCF
-    hrp.CanCollide = false
+    -- Save the mob's original state so we can restore on unlock
+    if not lockedMobs[v] then
+        lockedMobs[v] = {
+            canCollide = hrp.CanCollide,
+            anchored   = hrp.Anchored,
+            walkSpeed  = hum.WalkSpeed,
+            jumpPower  = hum.JumpPower,
+            autoRotate = hum.AutoRotate,
+        }
+    end
+
+    hrp.CFrame    = pinCF
+    hrp.Anchored  = true       -- ── THE FIX ── keeps the mob absolutely fixed
+    hrp.CanCollide = false     -- cosmetic; anchor already prevents fall
 
     local head = v:FindFirstChild("Head")
-    if head then
+    if head and head:IsA("BasePart") then
         head.CFrame     = pinCF * CFrame.new(0, 2, 0)
         head.CanCollide = false
     end
@@ -444,34 +394,49 @@ local function LockMobToCF(v, hrp, hum, pinCF)
     hum.JumpPower  = 0
     hum.AutoRotate = false
 
+    -- Don't destroy the Animator — just stop visible motion.
+    -- Destroying it can break certain mobs that expect it to exist.
     local anim = hum:FindFirstChildOfClass("Animator")
-    if anim then anim:Destroy() end
-
-    for _, t in ipairs(v:GetChildren()) do
-        if t:IsA("Script") or t:IsA("LocalScript") then
-            t.Disabled = true
-        end
+    if anim then
+        pcall(function()
+            for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
+                track:Stop(0)
+            end
+        end)
     end
 
-    if hrp:FindFirstChild("_Lock") then
-        hrp._Lock.Velocity = Vector3.zero
-        hrp._Lock.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-    else
-        local bv = Instance.new("BodyVelocity")
-        bv.Name     = "_Lock"
-        bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-        bv.Velocity = Vector3.zero
-        bv.Parent   = hrp
-    end
+    -- Don't disable scripts either — anchoring handles the freeze.
+    -- Disabling scripts can strip mobs of their per-tick maintenance.
 
     pcall(function() sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge) end)
-    pcall(function() hum:ChangeState(11) end)
+    pcall(function() hum:ChangeState(11) end)   -- Physics state
+end
+
+local function UnlockMob(v)
+    local saved = lockedMobs[v]
+    if not saved then return end
+    local hrp = v.Parent and v:FindFirstChild("HumanoidRootPart")
+    local hum = v.Parent and v:FindFirstChild("Humanoid")
+    if hrp then
+        hrp.Anchored   = saved.anchored
+        hrp.CanCollide = saved.canCollide
+        local bv = hrp:FindFirstChild("_Lock")
+        if bv then bv:Destroy() end
+        local fv = hrp:FindFirstChild("FarmingVelocity")
+        if fv then fv:Destroy() end
+    end
+    if hum then
+        hum.WalkSpeed  = saved.walkSpeed  or 16
+        hum.JumpPower  = saved.jumpPower  or 50
+        hum.AutoRotate = saved.autoRotate ~= false
+    end
+    lockedMobs[v] = nil
 end
 
 function Spirit.BringEnemy()
     pcall(function()
-        if not Config.BringMobs or not getgenv().BringMonster then return end
-        if not Spirit.PosMon then return end
+        if not Spirit.PosMon or not getgenv().BringMonster then return end
+        if not (Spirit.Config and Spirit.Config.BringMobs) then return end
 
         local char = LocalPlayer.Character
         if not char then return end
@@ -508,6 +473,21 @@ end
 task.spawn(function()
     while task.wait(0.05) do
         Spirit.BringEnemy()
+    end
+end)
+
+-- When bring is turned off, unlock every mob we touched
+task.spawn(function()
+    local lastBring = getgenv().BringMonster
+    while task.wait(1) do
+        local cur = getgenv().BringMonster
+        if lastBring and not cur then
+            for v in pairs(lockedMobs) do
+                pcall(UnlockMob, v)
+            end
+            lockedMobs = {}
+        end
+        lastBring = cur
     end
 end)
 
