@@ -7,14 +7,16 @@
 local BRANCH = "main"
 local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s"):format(BRANCH)
 
--- ═══════════════════════════════════════════════════════════════
--- TEAM — matches Config.Team in data.lua. Change here or in the
--- Config block; loader is the source of truth on first boot.
--- ═══════════════════════════════════════════════════════════════
 local TEAM = "Pirates"
 
+-- gacha.lua is loaded immediately after core.lua so the boot roll
+-- fires before any other task starts. MeleesController, LevelFarm,
+-- etc. all load afterward and won't compete for the dispatcher
+-- during the boot window.
 local MODULES = {
-    "core.lua","data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
+    "core.lua",
+    "gacha.lua",          -- ← boot roll first
+    "data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
     "tasks.lua","level_farm.lua","player.lua","mele.lua",
     "bosses.lua","sword_bosses.lua","cake_prince.lua","raids.lua",
     "swords_quests.lua","race.lua","soul_guitar.lua","utility.lua",
@@ -23,16 +25,7 @@ local MODULES = {
 
 local env = getgenv()
 
--- ═══════════════════════════════════════════════════════════════
--- TEAM SELECT — exact pattern from the reference script:
---   repeat
---       task.wait()
---       CommF_:InvokeServer("SetTeam", Config.Team)
---   until LocalPlayer.Character
--- The server accepts SetTeam from a client without a character and
--- spawns the player on the chosen side. Loop stops the instant the
--- character exists so we don't fire after spawn.
--- ═══════════════════════════════════════════════════════════════
+-- TEAM SELECT — CommF SetTeam loop, stops when character spawns.
 task.spawn(function()
     local lplayer = game:GetService("Players").LocalPlayer
     print("[EMS] selecting team — " .. TEAM)
