@@ -431,77 +431,132 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- TEAM SET — force Pirates, retry until player.Team reports it
+-- TEAM SET — fires ClickDetector on Pirate NPC (no remote)
+-- Blox Fruits team selection is done by walking up to the Pirate
+-- NPC at the starter island and clicking its ClickDetector. There's
+-- no SetTeam remote in the current game build; older scripts used
+-- one, but the click path is what actually works now.
 -- ═══════════════════════════════════════════════════════════════
-task.spawn(function()
-    -- Force "Pirates" regardless of Config — user asked for pirates only
-    local teamName = "Pirates"
-
-    -- Wait for live character
-    local charDeadline = os.time() + 60
-    while os.time() < charDeadline do
-        local hum = Spirit.Humanoid
-        if hum and hum.Health > 0 then break end
-        task.wait(0.25)
+local function getCurrentTeam()
+    local p = LocalPlayer
+    local ok, tm = pcall(function() return p.Team end)
+    if ok and tm then
+        if typeof(tm) == "Instance" then return tm.Name end
+        return tostring(tm)
     end
-    if not (Spirit.Humanoid and Spirit.Humanoid.Health > 0) then
-        Spirit.Report("[team] no live Humanoid after 60s — aborting")
+    return nil
+end
+
+local function findPirateNPC()
+    local containers = {}
+    if workspace:FindFirstChild("NPCs") then table.insert(containers, workspace.NPCs) end
+    if workspace:FindFirstChild("Characters") then table.insert(containers, workspace.Characters) end
+    local RS = game:GetService("ReplicatedStorage")
+    if RS:FindFirstChild("NPCs") then table.insert(containers, RS.NPCs) end
+
+    for _, c in ipairs(containers) do
+        -- Exact name match first
+        local n = c:FindFirstChild("Pirate")
+        if n and n:IsA("Model") then return n end
+        -- Then any NPC whose name starts with "Pirate" and has a ClickDetector
+        for _, child in ipairs(c:GetChildren()) do
+            if child:IsA("Model")
+               and child.Name:sub(1, 6) == "Pirate"
+               and child:FindFirstChildWhichIsA("ClickDetector", true) then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function findClickOrPrompt(npc)
+    if not npc then return nil, nil end
+    local cd = npc:FindFirstChildWhichIsA("ClickDetector", true)
+    local pp = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+    return cd, pp
+end
+
+-- Tween destination — Pirate starter island. Can be overridden by
+-- passing Config.PirateNPC_CF in data.lua.
+local PIRATE_NPC_CF = CFrame.new(1047, 15, 1506)
+
+local function setPirateTeam()
+    repeat task.wait(0.25) until Spirit.Humanoid and Spirit.Humanoid.Health > 0
+
+    local team = getCurrentTeam()
+    if team and string.lower(team) == "pirates" then
+        print("[team] already on Pirates")
         return
     end
 
-    print("[team] forcing → " .. teamName)
+    print("[team] moving to Pirate NPC to join")
 
-    local function currentTeam()
-        local p = LocalPlayer
-        -- Roblox native Team object
-        local ok, tm = pcall(function() return p.Team end)
-        if ok and tm then
-            if typeof(tm) == "Instance" then return tm.Name end
-            return tostring(tm)
+    for attempt = 1, 20 do
+        -- Re-check team
+        local cur = getCurrentTeam()
+        if cur and string.lower(cur) == "pirates" then
+            print("[team] joined Pirates")
+            SetTask("SubTask", "Team: Pirates")
+            return
         end
-        -- Data folder StringValue
-        local ok2, val = pcall(function()
-            local d = p:FindFirstChild("Data")
-            if d then
-                local t = d:FindFirstChild("Team")
-                if t and t:IsA("StringValue") then return t.Value end
-            end
-        end)
-        if ok2 and val then return tostring(val) end
-        -- Player attribute
-        local ok3, attr = pcall(function() return p:GetAttribute("Team") end)
-        if ok3 and attr then return tostring(attr) end
-        return nil
-    end
 
-    local endTime = os.time() + 30
-    local lastReport = 0
-    local callsFired = 0
+        -- Find the NPC (may not have replicated yet)
+        local npc = findPirateNPC()
+        local targetCF = PIRATE_NPC_CF
 
-    while os.time() < endTime do
-        local ok, result = pcall(function()
-            return game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", teamName)
-        end)
-        callsFired = callsFired + 1
+        if npc then
+            local pivot = npc:GetPivot()
+            targetCF = CFrame.new(pivot.Position + Vector3.new(0, 3, 0))
+        end
 
-        -- Report every 3s
-        if os.time() - lastReport >= 3 then
-            lastReport = os.time()
-            local cur = currentTeam()
-            print(("[team] fired=%d | current=%s | ok=%s result=%s")
-                :format(callsFired, tostring(cur), tostring(ok), tostring(result)))
-            if cur and string.lower(cur) == string.lower(teamName) then
-                print("[team] confirmed on " .. cur)
-                Spirit.SetTask("SubTask", "Team: " .. cur)
-                return
+        -- Tween close to the NPC if we're not already there
+        local hrp = Spirit.HumanoidRootPart
+        if hrp then
+            local dist = (hrp.Position - targetCF.Position).Magnitude
+            if dist > 8 then
+                Spirit.TweenController.Create(targetCF)
+                -- Give the tween time to land
+                local waitStart = os.time()
+                while os.time() - waitStart < 5 do
+                    if (Spirit.HumanoidRootPart.Position - targetCF.Position).Magnitude < 12 then
+                        break
+                    end
+                    task.wait(0.2)
+                end
             end
         end
 
-        task.wait(0.3)
+        -- Fire the click/prompt
+        if npc then
+            local cd, pp = findClickOrPrompt(npc)
+            if cd and typeof(fireclickdetector) == "function" then
+                pcall(function() fireclickdetector(cd) end)
+                print("[team] fired ClickDetector on " .. npc.Name)
+            end
+            if pp and typeof(fireproximityprompt) == "function" then
+                pcall(function() fireproximityprompt(pp) end)
+                print("[team] fired ProximityPrompt on " .. npc.Name)
+            end
+        else
+            -- NPC not replicated — try the click remote path directly
+            pcall(function()
+                game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", "Pirates")
+            end)
+        end
+
+        task.wait(1.5)
     end
 
-    Spirit.SetTask("SubTask", "Team: " .. teamName)
-    print("[team] loop ended — if not on Pirates, check console for result values")
+    print("[team] SetTeam attempts done — current team is: " .. tostring(getCurrentTeam()))
+    SetTask("SubTask", "Team: " .. tostring(getCurrentTeam() or "?"))
+end
+
+if LocalPlayer.Character then
+    task.spawn(setPirateTeam)
+end
+LocalPlayer.CharacterAdded:Connect(function()
+    task.spawn(setPirateTeam)
 end)
 
 task.spawn(function()
