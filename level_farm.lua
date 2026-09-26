@@ -1,10 +1,8 @@
--- level_farm.lua — LevelFarm task with underwater city routing
--- 175–249 runs Dark Master at Skylands (no prison).
--- 375–449 runs Fishman Warrior/Commando inside the underwater city.
--- The underwater city sits at X ~61000 in a separate instanced zone —
--- walking straight there is 58,000 studs of geometry the tween can't
--- cross. This task routes through the entrance at (4047, -4, -1814)
--- on the way in and the exit at (61172, -4, 1946) on the way out.
+-- level_farm.lua — LevelFarm with UW + Sky teleport routing
+-- Upper sky (God's Guard, Shanda, Royal Squad, Royal Soldier) and
+-- lower sky (Sky Bandit, Dark Master) are separated by a vertical
+-- gap the tween can't cross reliably. Route via requestEntrance for
+-- both directions.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -17,10 +15,65 @@ local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
 
 -- ═══════════════════════════════════════════════════════════════
+-- SKY ROUTING
+-- Zone is decided by Y:
+--   upper = Y >= 3000  (God's Guard + everything above)
+--   lower = 300 <= Y < 3000  (Sky Bandit, Dark Master)
+--   ground = Y < 300
+-- Two directions matter:
+--   anything → upper: requestEntrance SKY_UPPER_ENTRY
+--   upper → lower:   requestEntrance SKY_LOWER_ENTRY
+-- Lower → ground and ground → lower just fly normally.
+-- ═══════════════════════════════════════════════════════════════
+local SKY_UPPER_ENTRY = Vector3.new(-6023.57666015625, 5469.7197265625, 2203.308349609375)
+local SKY_LOWER_ENTRY = Vector3.new(-4166.60986328125, 1093.697998046875, -347.16226196289062)
+local SKY_TRIGGER_COOLDOWN = 4
+
+local skyState = {lastTrigger = 0}
+
+local function skyZoneOf(pos)
+    if not pos then return "ground" end
+    if pos.Y >= 3000 then return "upper" end
+    if pos.Y >= 300  then return "lower" end
+    return "ground"
+end
+
+-- Returns true when a sky teleport was issued and the caller should
+-- skip the rest of the tick.
+local function ensureSkyPath(destCF)
+    local hrp = Spirit.HumanoidRootPart
+    if not hrp then return false end
+
+    local destZone   = skyZoneOf(destCF and destCF.Position)
+    local playerZone = skyZoneOf(hrp.Position)
+
+    if destZone == playerZone then return false end
+
+    local needUpper = (destZone == "upper" and playerZone ~= "upper")
+    local needLower = (destZone == "lower" and playerZone == "upper")
+
+    if not (needUpper or needLower) then return false end
+
+    if tick() - skyState.lastTrigger < SKY_TRIGGER_COOLDOWN then
+        return true
+    end
+    skyState.lastTrigger = tick()
+
+    local entry = needUpper and SKY_UPPER_ENTRY or SKY_LOWER_ENTRY
+    Spirit.SetTask("MainTask", "Level Farm | Sky teleport — "
+        .. (needUpper and "Upper" or "Lower"))
+
+    pcall(function()
+        Remotes.CommF_:InvokeServer("requestEntrance", entry)
+    end)
+    task.wait(1.5)
+    return true
+end
+
+-- ═══════════════════════════════════════════════════════════════
 -- UNDERWATER CITY ROUTING
--- Zone boundary is X = 50000. Anything past that is the instanced
--- underwater map. The entrance and exit are touch/prompt zones the
--- server watches; we fire them and let the server move us.
+-- Zone boundary is X = 50000. Entrance at (4047, -4, -1814),
+-- exit at (61172, -4, 1946).
 -- ═══════════════════════════════════════════════════════════════
 local UW_ENTRANCE_CF = CFrame.new(4047.98, -4.00, -1814.70)
 local UW_EXIT_CF     = CFrame.new(61172.18, -4.00, 1946.88)
@@ -110,9 +163,6 @@ local function triggerUnderwater(action)
 end
 Spirit.TriggerUnderwater = triggerUnderwater
 
--- Returns true when the routing owns the tick (player needs to move
--- to the entrance or exit, or fire the trigger). Returns false when
--- the caller should proceed with its normal tween.
 local function ensureUnderwaterPath(destCF)
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return false end
@@ -120,7 +170,6 @@ local function ensureUnderwaterPath(destCF)
     local playerInUW = inUnderwaterZone(hrp.Position)
     local destInUW   = inUnderwaterZone(destCF and destCF.Position)
 
-    -- Going in: outside now, destination inside.
     if destInUW and not playerInUW then
         local distToEnt = (hrp.Position - UW_ENTRANCE_CF.Position).Magnitude
         if distToEnt > 15 then
@@ -132,7 +181,6 @@ local function ensureUnderwaterPath(destCF)
         return true
     end
 
-    -- Going out: inside now, destination outside.
     if playerInUW and not destInUW then
         local distToExit = (hrp.Position - UW_EXIT_CF.Position).Magnitude
         if distToExit > 15 then
@@ -148,7 +196,7 @@ local function ensureUnderwaterPath(destCF)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- ManualLevelLookup — mob / quest / CFrame per level tier
+-- ManualLevelLookup
 -- ═══════════════════════════════════════════════════════════════
 local function ManualLevelLookup()
     local lv = ScriptStorage.PlayerData.Level or 0
@@ -633,9 +681,12 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- UW ROUTING — runs before anything else. If we need to cross the
-    -- underwater boundary, this handles the entrance/exit hop and
-    -- returns so the rest of the tick is skipped.
+    -- SKY ROUTING — runs first. If the tier is in a different sky zone
+    -- than the player, requestEntrance handles the teleport and we
+    -- skip the rest of the tick.
+    if Q.PosQ and ensureSkyPath(Q.PosQ) then return end
+
+    -- UW ROUTING — same shape for the underwater city boundary.
     if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
 
     local now = os.time()
