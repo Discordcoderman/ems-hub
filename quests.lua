@@ -1,10 +1,4 @@
--- quests.lua
--- Quest system. Two layers:
---   1. J       — legacy NPC/quest-name table, used by LevelFarm and puzzle tasks
---   2. QuestController — remote-event driven state (Remotes.QuestUpdate)
--- Publishes: Spirit.J, Spirit.QuestController, Spirit.GetActiveQuestName,
---            Spirit.HasActiveQuestEvent, Spirit.GetCurrentClaimQuest.
-
+-- quests.lua — quest system, GUI text + remote event driven
 local Spirit = getgenv().Spirit
 if not Spirit then error("[quests] core.lua not loaded") end
 
@@ -14,48 +8,33 @@ local LocalPlayer       = Spirit.LocalPlayer
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
 
--- Wait for player data to at least be indexable
 repeat task.wait() until LocalPlayer:FindFirstChild("Data")
 
--- ═══════════════════════════════════════════════════════════════
--- LEGACY QUEST TABLE (J)
--- ═══════════════════════════════════════════════════════════════
 local J = {
     CurrentLevel = 2,
     DoubleQuest = true,
     CurrentQuests = {},
     BlacklistedQuestIds = {
-        BartiloQuest = 1,
-        CitizenQuest = 1,
-        Trainees = 1,
-        MarineQuest = 1,
-        ImpelQuest = 1,
+        BartiloQuest = 1, CitizenQuest = 1, Trainees = 1,
+        MarineQuest = 1, ImpelQuest = 1,
     },
 }
 Spirit.J = J
 
--- Quests module lives on ReplicatedStorage. If it's missing (early load),
--- RefreshQuest will simply no-op until a later call.
 pcall(function()
     J.Quests = require(ReplicatedStorage.Quests)
 end)
 
--- Ignore first arg so both J.RefreshQuest() and J:RefreshQuest() work
 function J.RefreshQuest(_self)
     local timeout = os.time()
     while not ScriptStorage.PlayerData.Level do
         task.wait(1)
-        if os.time() - timeout > 30 then
-            print("[quests] Timeout waiting for player data, skipping refresh")
-            return
-        end
+        if os.time() - timeout > 30 then return end
     end
-
     if not J.Quests then
         pcall(function() J.Quests = require(ReplicatedStorage.Quests) end)
         if not J.Quests then return end
     end
-
     local highestReq = 0
     local bestQuest
     for questId, questData in pairs(J.Quests) do
@@ -73,11 +52,7 @@ function J.RefreshQuest(_self)
             end
         end
     end
-
     if not bestQuest then return end
-
-    -- Original behavior: if any Task value on the last entry is 1,
-    -- pop that last entry off (usually removes a boss sub-task).
     local lastEntry = bestQuest[#bestQuest]
     if lastEntry and lastEntry.Task then
         for _, v in pairs(lastEntry.Task) do
@@ -87,8 +62,6 @@ function J.RefreshQuest(_self)
             end
         end
     end
-
-    -- Look up NPC CFrame via GuideModule
     pcall(function()
         local guide = require(ReplicatedStorage.GuideModule)
         for npcName, npcData in pairs(guide.Data.NPCList) do
@@ -99,7 +72,6 @@ function J.RefreshQuest(_self)
             end
         end
     end)
-
     J.CurrentQuests = bestQuest
 end
 
@@ -127,36 +99,31 @@ function J.StartQuest(_self, questId, questIndex)
     return Remotes.CommF_:InvokeServer("StartQuest", questId, questIndex)
 end
 
--- Reads the currently-claimed quest from PlayerGui (mob name from title text)
+-- Robust GUI mob-name extraction. Handles "(Lv. X)", "[Lv. X]", and no-suffix.
 function J.GetCurrentClaimQuest(_self)
     local main = LocalPlayer:FindFirstChild("PlayerGui")
                 and LocalPlayer.PlayerGui:FindFirstChild("Main")
     local questFrame = main and main:FindFirstChild("Quest")
-    if not questFrame or not questFrame.Visible then return nil end
+    if not questFrame or not questFrame.Visible then return nil, nil end
     local container = questFrame:FindFirstChild("Container")
     local titleBox = container
                  and container:FindFirstChild("QuestTitle")
                  and container.QuestTitle:FindFirstChild("Title")
-    if not titleBox then return nil end
+    if not titleBox then return nil, nil end
 
-    local text = titleBox.Text
-    local mob = text:gsub("%s*Defeat%s*(%d*)%s*(.-)%s*%b()", "%2")
-    if type(mob) == "string" then
-        mob = string.gsub(mob, "Military ", "Mil. ")
-    end
+    local text = tostring(titleBox.Text)
+    local mob = text:match("Defeat%s+%d+%s+(.-)%s*[%(%[]")
+    if not mob then mob = text:match("Defeat%s+%d+%s+(.+)$") end
+    if not mob or mob == "" then mob = text end
+    mob = mob:gsub("%s+$", "")
+    mob = mob:gsub("Military ", "Mil. ")
     return mob, text
 end
 
--- Convenience alias so external modules don't need to reach into J
 Spirit.GetCurrentClaimQuest = function()
     return J.GetCurrentClaimQuest(J)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- REMOTE-EVENT QUEST CONTROLLER
--- Listens to Remotes.QuestUpdate.OnClientEvent for authoritative
--- quest state. Preferred over GUI-text reads (no replication lag).
--- ═══════════════════════════════════════════════════════════════
 local QuestController = {
     CurrentQuest = "",
     CurrentQuestName = "",
@@ -166,9 +133,7 @@ Spirit.QuestController = QuestController
 
 function QuestController:Set(data)
     self.CurrentQuest = (function()
-        for progressKey in pairs(data.Progress or {}) do
-            return progressKey
-        end
+        for progressKey in pairs(data.Progress or {}) do return progressKey end
         return ""
     end)()
     self.CurrentQuestName = data.InternalQuestName or ""
