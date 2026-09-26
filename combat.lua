@@ -1,14 +1,14 @@
--- combat.lua — CombatController, BringEnemy, fast-attack, CheckItem
+-- combat.lua — CombatController, BringEnemy (attract), fast-attack, CheckItem
 local Spirit = getgenv().Spirit
 if not Spirit then error("[combat] core.lua not loaded") end
 if not Spirit.TweenController then error("[combat] tween.lua not loaded") end
 
-local Services      = Spirit.Services
-local Workspace     = Services.Workspace
+local Services          = Spirit.Services
+local Workspace         = Services.Workspace
 local ReplicatedStorage = Services.ReplicatedStorage
-local LocalPlayer   = Spirit.LocalPlayer
-local ScriptStorage = Spirit.ScriptStorage
-local Remotes       = Spirit.Remotes
+local LocalPlayer       = Spirit.LocalPlayer
+local ScriptStorage     = Spirit.ScriptStorage
+local Remotes           = Spirit.Remotes
 
 local function CheckItem(itemName)
     if not itemName then return false end
@@ -211,6 +211,12 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
     pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
     names = (type(names) == "string") and {names} or (names or {})
 
+    -- Keep the bring system pointed at whatever we're currently attacking.
+    Spirit.BringNames = names
+    if #names >= 1 then
+        Spirit.Mon = names[1]
+    end
+
     for _, rawName in ipairs(names) do
         local nameStr = tostring(rawName)
 
@@ -263,7 +269,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
                         if ScriptStorage.PlayerData.Level > 100
                            and (os.time() - unchangedStart) >= CombatController.MAX_ATTACK_DURATION_2
                            and (hum.Health - hum.MaxHealth == 0) then
-                            -- No hop — nudge closer and reset the timer
                             Spirit.SetTask("SubTask", "Mob HP unchanged 60s — repositioning")
                             unchangedStart = os.time()
                             Spirit.TweenController.Create(hrp.CFrame + Vector3.new(0, 3, 0))
@@ -319,7 +324,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
             end
 
         elseif not forceNear then
-            -- No hop on missing mob. Just tween to its spawn region.
             local region = ScriptStorage.MobRegions[rawName]
             if not region then
                 local spawn = Workspace.Enemies:FindFirstChild(rawName)
@@ -345,107 +349,140 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
     end
 end
 
--- ═══ BringEnemy — anchored lock (no fall-through) ═══
+-- ═══════════════════════════════════════════════════════════════
+-- BRING ENEMY — attract quest mobs to a spot below the player
+-- Attract, don't weld. Every tick, the mob's HRP is written to a
+-- point below the player's feet. Network ownership is forced to the
+-- client so the writes replicate, physics is zeroed so nothing
+-- fights the pull, and the humanoid is parked in Physics state so it
+-- doesn't try to pathfind its way out. No Anchored = true — that
+-- would freeze the mob and stop the pull from updating when the
+-- player moves.
+-- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
-Spirit.PosMon = Spirit.PosMon or nil
-Spirit.Mon    = Spirit.Mon    or nil
 
 local lockedMobs = {}
 
-local function LockMobToCF(v, hrp, hum, pinCF)
-    if not lockedMobs[v] then
-        lockedMobs[v] = {
-            canCollide = hrp.CanCollide,
-            anchored   = hrp.Anchored,
-            walkSpeed  = hum.WalkSpeed,
-            jumpPower  = hum.JumpPower,
-            autoRotate = hum.AutoRotate,
-        }
-    end
-
-    hrp.CFrame     = pinCF
-    hrp.Anchored   = true
-    hrp.CanCollide = false
-
-    local head = v:FindFirstChild("Head")
-    if head and head:IsA("BasePart") then
-        head.CFrame     = pinCF * CFrame.new(0, 2, 0)
-        head.CanCollide = false
-    end
-
-    hum.WalkSpeed  = 0
-    hum.JumpPower  = 0
-    hum.AutoRotate = false
-
-    local anim = hum:FindFirstChildOfClass("Animator")
-    if anim then
-        pcall(function()
-            for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
-                track:Stop(0)
-            end
-        end)
-    end
-
-    pcall(function() sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge) end)
-    pcall(function() hum:ChangeState(11) end)
+local function saveMobState(v, hrp, hum)
+    if lockedMobs[v] then return end
+    local ok, owner = pcall(function() return v:GetNetworkOwner() end)
+    lockedMobs[v] = {
+        canCollide = hrp.CanCollide,
+        anchored   = hrp.Anchored,
+        walkSpeed  = hum.WalkSpeed,
+        jumpPower  = hum.JumpPower,
+        autoRotate = hum.AutoRotate,
+        netOwner   = ok and owner or nil,
+    }
 end
 
-local function UnlockMob(v)
+local function attractMob(v, hrp, hum, targetPos)
+    if not v.Parent or not hrp.Parent then return end
+    if hum.Health <= 0 then return end
+
+    saveMobState(v, hrp, hum)
+
+    -- Give the client network ownership so CFrame writes replicate
+    -- back to the server and stick.
+    pcall(function() setnetworkowner(v, LocalPlayer) end)
+
+    -- Kill every force that would fight the pull.
+    pcall(function()
+        hrp.Anchored   = false
+        hrp.CanCollide = false
+        hrp.Velocity   = Vector3.zero
+        hrp.RotVelocity = Vector3.zero
+    end)
+
+    -- Park the humanoid so it doesn't path back.
+    pcall(function()
+        hum.WalkSpeed  = 0
+        hum.JumpPower  = 0
+        hum.AutoRotate = false
+        hum:ChangeState(Enum.HumanoidStateType.Physics)
+    end)
+
+    -- Hard-write the CFrame. This is the pull.
+    hrp.CFrame = CFrame.new(targetPos)
+end
+
+local function releaseMob(v)
     local saved = lockedMobs[v]
     if not saved then return end
-    local hrp = v.Parent and v:FindFirstChild("HumanoidRootPart")
-    local hum = v.Parent and v:FindFirstChild("Humanoid")
-    if hrp then
-        hrp.Anchored   = saved.anchored
-        hrp.CanCollide = saved.canCollide
-        local bv = hrp:FindFirstChild("_Lock")
-        if bv then bv:Destroy() end
-        local fv = hrp:FindFirstChild("FarmingVelocity")
-        if fv then fv:Destroy() end
-    end
-    if hum then
-        hum.WalkSpeed  = saved.walkSpeed  or 16
-        hum.JumpPower  = saved.jumpPower  or 50
-        hum.AutoRotate = saved.autoRotate ~= false
+    if v.Parent then
+        local hrp = v:FindFirstChild("HumanoidRootPart")
+        local hum = v:FindFirstChild("Humanoid")
+        if hrp then
+            pcall(function()
+                hrp.CanCollide = saved.canCollide
+                hrp.Anchored   = saved.anchored
+            end)
+        end
+        if hum then
+            pcall(function()
+                hum.WalkSpeed  = saved.walkSpeed  or 16
+                hum.JumpPower  = saved.jumpPower  or 50
+                hum.AutoRotate = saved.autoRotate ~= false
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end)
+        end
     end
     lockedMobs[v] = nil
 end
 
 function Spirit.BringEnemy()
-    pcall(function()
-        if not Spirit.PosMon or not getgenv().BringMonster then return end
-        if not (Spirit.Config and Spirit.Config.BringMobs) then return end
+    if not getgenv().BringMonster then return end
+    if not (Spirit.Config and Spirit.Config.BringMobs) then return end
 
-        local char = LocalPlayer.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
 
-        local targetCF = (typeof(Spirit.PosMon) == "CFrame")
-            and Spirit.PosMon
-            or CFrame.new(Spirit.PosMon)
-        local pinCF   = targetCF * CFrame.new(0, 3, 0)
-        local maxPull = 20
-        local pulled  = 0
-        local bringRange = 300
+    -- Target point = a few studs below the player's feet.
+    local basePos = root.Position + Vector3.new(0, -6, 0)
 
-        local targetName = (Spirit.Mon and Spirit.Mon ~= "") and Spirit.Mon or nil
-        local enemyFolder = Workspace:FindFirstChild("Enemies")
-        if not enemyFolder then return end
+    local enemyFolder = Workspace:FindFirstChild("Enemies")
+    if not enemyFolder then return end
 
-        for _, v in ipairs(enemyFolder:GetChildren()) do
-            if pulled >= maxPull then break end
-            if targetName and v.Name ~= targetName then continue end
+    local MAX_PULL = 20
+    local RANGE    = 350
+    local pulled   = 0
 
-            local hrp = v:FindFirstChild("HumanoidRootPart")
-            local hum = v:FindFirstChild("Humanoid")
-            if not hrp or not hum or hum.Health <= 0 then continue end
-            if (hrp.Position - root.Position).Magnitude > bringRange then continue end
+    -- Name filter — prefer Spirit.BringNames (set by CombatController.Attack),
+    -- fall back to Spirit.Mon (single target).
+    local nameList = Spirit.BringNames
+    if (not nameList or #nameList == 0) and Spirit.Mon and Spirit.Mon ~= "" then
+        nameList = {Spirit.Mon}
+    end
 
-            LockMobToCF(v, hrp, hum, pinCF)
-            pulled = pulled + 1
+    for _, v in ipairs(enemyFolder:GetChildren()) do
+        if pulled >= MAX_PULL then break end
+
+        if nameList and #nameList > 0 then
+            if not table.find(nameList, v.Name) then continue end
         end
-    end)
+
+        local hrp = v:FindFirstChild("HumanoidRootPart")
+        local hum = v:FindFirstChild("Humanoid")
+        if not hrp or not hum or hum.Health <= 0 then continue end
+        if (hrp.Position - root.Position).Magnitude > RANGE then continue end
+
+        -- Small radial jitter so they don't stack on a single point.
+        local angle  = (pulled * 1.7) % (math.pi * 2)
+        local radius = 2 + (pulled % 3)
+        local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+
+        attractMob(v, hrp, hum, basePos + offset)
+        pulled = pulled + 1
+    end
+
+    -- Prune locks for mobs that have been destroyed (died).
+    for v in pairs(lockedMobs) do
+        if not v.Parent then
+            lockedMobs[v] = nil
+        end
+    end
 end
 
 task.spawn(function()
@@ -455,16 +492,16 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    local lastBring = getgenv().BringMonster
+    local last = getgenv().BringMonster
     while task.wait(1) do
         local cur = getgenv().BringMonster
-        if lastBring and not cur then
+        if last and not cur then
             for v in pairs(lockedMobs) do
-                pcall(UnlockMob, v)
+                pcall(releaseMob, v)
             end
             lockedMobs = {}
         end
-        lastBring = cur
+        last = cur
     end
 end)
 
