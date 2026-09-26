@@ -82,7 +82,6 @@ function FunctionsHandler.SynchorizeUntilModuleLoaded(module, timeout)
     end
 end
 
--- Pre-register every task slot
 local TASKS_TO_REGISTER = {
     "LocalPlayerController","ExpRedeem","LevelFarm","Saber","Rengoku","Yama","Tushita",
     "SpikeyTrident","SharkAchor","Pole","FoxLamp","DarkDagger","Canvander","BuddySword",
@@ -99,14 +98,17 @@ for _, taskName in ipairs(TASKS_TO_REGISTER) do
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- TASK ORDER — first match wins
+-- TASK ORDER — MeleesController first (buying / prison override),
+-- CollectDrops second (fruit priority), raids and bosses before
+-- LevelFarm. LevelFarm catches the rest.
 -- ═══════════════════════════════════════════════════════════════
 Spirit.TasksOrder = {
+    "MeleesController",
     "CollectDrops",
 
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
-    "MeleesController",
+
     "LevelFarm",
 
     "Tushita", "Yama", "Saber", "CursedDualKatana", "SoulGuitar",
@@ -125,13 +127,6 @@ Spirit.CurrentTask = nil
 
 function Spirit.RefreshTasksData()
     if _G.Stop then return end
-
-    -- ── Sea-transition gate ──
-    -- While sea.lua is running the Ice Admiral / Bartilo / rip_indra
-    -- chain, no task gets the dispatcher. Otherwise BossesTask,
-    -- SwordBossTask, MeleesController etc. call TweenController
-    -- against the transition's own tweens and the chain never lands.
-    -- Flag is set and cleared only by sea.lua.
     if _G.SeaTransitionActive then return end
 
     for _, taskName in ipairs(Spirit.TasksOrder) do
