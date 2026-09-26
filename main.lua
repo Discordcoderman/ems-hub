@@ -1,4 +1,4 @@
--- main.lua — startup side effects + main tick loop (no idle hop, no auto hop)
+-- main.lua — startup side effects + main tick loop
 local Spirit = getgenv().Spirit
 if not Spirit then error("[main] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[main] tasks.lua not loaded") end
@@ -172,12 +172,17 @@ task.spawn(function()
     end
 end)
 
--- ── MAIN LOOP (idle-hop and auto-hop removed) ──────────────────
+-- ── MAIN LOOP ──────────────────────────────────────────────────
+-- RefreshPlayerData runs every tick so DevilFruit, Race, RaceLevel,
+-- and any new Data children stay live. core.lua owns the hot loop
+-- for Level/Beli/Fragments; this is the catch-all.
 SetText("MainTextLabel", "Loaded — waiting for player data...")
 
 print("[Spirit] main.lua loaded — entering main loop")
 
 while task.wait() do
+    pcall(Spirit.RefreshPlayerData)
+
     if ScriptStorage.PlayerData.Level and ScriptStorage.PlayerData.Level > 0 then
         local ok, err = xpcall(Spirit.RefreshTasksData, debug.traceback)
         if not ok then
@@ -186,6 +191,5 @@ while task.wait() do
         end
     else
         task.wait(1)
-        pcall(Spirit.RefreshPlayerData)
     end
 end
