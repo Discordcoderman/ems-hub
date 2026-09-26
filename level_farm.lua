@@ -4,7 +4,7 @@ if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
 
 local Services      = Spirit.Services
-local Workspace     = Services.Workspace
+local Workspace     = Spirit.Workspace
 local ReplicatedStorage = Services.ReplicatedStorage
 local LocalPlayer   = Spirit.LocalPlayer
 local ScriptStorage = Spirit.ScriptStorage
@@ -455,7 +455,7 @@ LF:RegisterMethod("Start", function(step)
 
     if not onCorrectQuest then
         local now = os.time()
-        if now - LastStartQuest > 30 then
+        if now - LastStartQuest > 5 then
             LastStartQuest = now
             if Q.PosQ then
                 local dist = Spirit.CaculateDistance(Q.PosQ)
@@ -463,7 +463,7 @@ LF:RegisterMethod("Start", function(step)
                     Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
                 else
                     pcall(function()
-                        Remotes.CommF_:InvokeServer("StartQuest", Q.Qname, Q.Qdata)
+                        Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
                     end)
                     print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
                 end
