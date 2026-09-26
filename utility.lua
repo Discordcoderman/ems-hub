@@ -77,11 +77,18 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS — fruit priority (top of TasksOrder)
--- Only collects models that contain a "FruitAnimator" child, which
--- is the reliable marker for a spawned collectible fruit.
+-- COLLECT DROPS — with full-storage guard
+-- Skips fruits the player already owns. Blacklists fruits the
+-- server refuses to store. When storage is full, fall through to
+-- normal farming instead of retrying forever.
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
+
+-- Persistent blacklist: fruits the player already owns or the server
+-- rejected. Cleared every 60s to re-check in case inventory changes.
+local ownedFruitCache = {}
+local blacklist = {}
+local lastBlacklistClear = 0
 
 local function isFruitModel(obj)
     if not obj or not obj.Parent then return false end
@@ -89,20 +96,49 @@ local function isFruitModel(obj)
     return obj:FindFirstChild("FruitAnimator") ~= nil
 end
 
+local function getFruitName(fruit)
+    return fruit:GetAttribute("OriginalName")
+        or (fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
+        or fruit.Name
+end
+
+-- Refresh the owned-fruits cache from the server every 60s
+local function refreshOwnedFruits()
+    if os.time() - lastBlacklistClear < 60 then return end
+    lastBlacklistClear = os.time()
+    blacklist = {}
+
+    local ok, inv = pcall(function()
+        return Remotes.CommF_:InvokeServer("getInventoryFruits")
+    end)
+    if ok and type(inv) == "table" then
+        for _, v in pairs(inv) do
+            if type(v) == "table" and v.Name then
+                ownedFruitCache[v.Name] = true
+            end
+        end
+    end
+end
+
 local lastScan = 0
 local cachedFruit = nil
 
 CD:RegisterMethod("Refresh", function()
-    -- Cache scan for 5s so the dispatcher doesn't hammer workspace every tick
+    refreshOwnedFruits()
+
     if os.time() - lastScan < 5 then
         return cachedFruit
     end
     lastScan = os.time()
     cachedFruit = nil
+
     for _, obj in ipairs(workspace:GetDescendants()) do
         if isFruitModel(obj) then
-            cachedFruit = obj
-            return cachedFruit
+            local name = getFruitName(obj)
+            if not blacklist[name] and not ownedFruitCache[name] then
+                cachedFruit = obj
+                return cachedFruit
+            end
         end
     end
     return nil
@@ -121,8 +157,9 @@ CD:RegisterMethod("Start", function(fruit)
                 or fruit:FindFirstChildWhichIsA("BasePart")
     if not target or not target.Position then return end
 
-    print("[fruit] collecting " .. fruit.Name .. " at " .. tostring(target.Position))
-    SetTask("MainTask", "Collecting fruit: " .. fruit.Name)
+    local fruitName = getFruitName(fruit)
+    print("[fruit] collecting " .. fruitName)
+    SetTask("MainTask", "Collecting fruit: " .. fruitName)
 
     Spirit.TweenController.Create(CFrame.new(target.Position + Vector3.new(0, 3, 0)))
     task.wait(0.7)
@@ -138,14 +175,18 @@ CD:RegisterMethod("Start", function(fruit)
 
     task.wait(0.5)
 
-    -- Fall back to StoreFruit if the fruit is still around
+    -- Try StoreFruit. If the fruit is still around, or the server
+    -- rejected the store (already have one / storage full), blacklist
+    -- it so we don't spin on it again.
     if fruit.Parent then
-        local name = fruit:GetAttribute("OriginalName")
-                   or (fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
-                   or fruit.Name
-        pcall(function()
-            Remotes.CommF_:InvokeServer("StoreFruit", name, fruit)
+        local ok, resp = pcall(function()
+            return Remotes.CommF_:InvokeServer("StoreFruit", fruitName, fruit)
         end)
+        if not ok or fruit.Parent then
+            blacklist[fruitName] = true
+            ownedFruitCache[fruitName] = true
+            print("[fruit] " .. fruitName .. " rejected by server — skipping for now")
+        end
     end
 
     -- Invalidate cache so next Refresh scans fresh
@@ -154,7 +195,7 @@ CD:RegisterMethod("Start", function(fruit)
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- Stubs (unused features that need registered slots)
+-- Stubs
 -- ═══════════════════════════════════════════════════════════════
 local SSP = Spirit.FunctionsHandler.SecondSeaPuzzle
 SSP:RegisterMethod("Refresh", function() return nil end)
