@@ -2,6 +2,10 @@
 local Spirit = getgenv().Spirit or {}
 getgenv().Spirit = Spirit
 
+-- Fresh boot — any transition flag left over from the prior place is
+-- stale by definition. Reset before anything reads it.
+_G.SeaTransitionActive = false
+
 local Players      = game:GetService("Players")
 local RunService   = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -438,6 +442,16 @@ local function RegisterLocalPlayerEventsConnection()
             ScriptStorage.Connections.LocalPlayer.PointConnection =
                 pts:GetPropertyChangedSignal("Value"):Connect(function() Spirit.AddPoint() end)
         end
+
+        -- Level/Beli/Fragments listener — instant sync on change.
+        local lvl = data:FindFirstChild("Level")
+        if lvl then
+            ScriptStorage.Connections.LocalPlayer.LevelConnection =
+                lvl:GetPropertyChangedSignal("Value"):Connect(function()
+                    ScriptStorage.PlayerData.Level = lvl.Value
+                    pcall(Spirit.AddPoint)
+                end)
+        end
     end
 end
 Spirit.RegisterLocalPlayerEventsConnection = RegisterLocalPlayerEventsConnection
@@ -447,6 +461,30 @@ LocalPlayer.CharacterAdded:Connect(function()
     Spirit.RegisterLocalPlayerEventsConnection()
 end)
 pcall(Spirit.RegisterLocalPlayerEventsConnection)
+
+-- ═══════════════════════════════════════════════════════════════
+-- LIVE PLAYERDATA SYNC
+-- Every level-gated branch in the suite — sea transitions, melee
+-- purchases, boss level checks, ManualLevelLookup — reads
+-- ScriptStorage.PlayerData.Level/Beli/Fragments. Those values are
+-- written once at script load. Without this loop they stay frozen
+-- and the bot never advances past the tier it started on. This is
+-- the fix for island transitions.
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while task.wait(0.25) do
+        pcall(function()
+            local data = LocalPlayer:FindFirstChild("Data")
+            if not data then return end
+            for _, key in ipairs({"Level", "Beli", "Fragments"}) do
+                local v = data:FindFirstChild(key)
+                if v and ScriptStorage.PlayerData[key] ~= v.Value then
+                    ScriptStorage.PlayerData[key] = v.Value
+                end
+            end
+        end)
+    end
+end)
 
 task.spawn(function()
     task.wait(3)
