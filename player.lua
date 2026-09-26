@@ -1,4 +1,4 @@
--- player.lua — LocalPlayerController + ability buyer (Geppo, Buso, Ken, Soru)
+-- player.lua — LocalPlayerController + ability buyer
 local Spirit = getgenv().Spirit
 if not Spirit then error("[player] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[player] tasks.lua not loaded") end
@@ -15,7 +15,6 @@ LPC:RegisterMethod("EquipTool", function(toolName)
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-    -- Already equipped?
     for _, v in ipairs(char:GetChildren()) do
         if v:IsA("Tool") and (v.Name == tostring(toolName) or v.ToolTip == toolName) then
             return
@@ -45,23 +44,14 @@ end)
 
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
--- ═══════════════════════════════════════════════════════════════
--- ABILITY BUYER — Geppo, Buso, Ken, Soru
--- Attempts purchase every 30s until it succeeds, then stops.
--- ═══════════════════════════════════════════════════════════════
+-- Abilities buyer
 task.spawn(function()
-    -- Wait for the character and Data to be ready
     repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
     repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
     task.wait(5)
 
     local bought = {Geppo = false, Buso = false, Ken = false, Soru = false}
 
-    -- Checks that survive across respawns:
-    --   Buso: is learned if the "Buso" tag exists on the player (persists).
-    --   Ken:  is learned if the "Ken" tag exists.
-    --   Geppo / Soru: no persistent marker — assume bought once the remote
-    --                 returns without error after a successful buy.
     local function hasTag(name)
         local ok, v = pcall(function() return LocalPlayer:HasTag(name) end)
         return ok and v == true
@@ -74,13 +64,13 @@ task.spawn(function()
 
             if not bought.Geppo then
                 SetTask("SubTask", "Buying Geppo...")
-                local ok, r = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Geppo") end)
+                local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Geppo") end)
                 if ok then bought.Geppo = true end
                 task.wait(1)
             end
 
             if not bought.Soru then
-                local ok, r = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
+                local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
                 if ok then bought.Soru = true end
                 task.wait(1)
             end
@@ -102,17 +92,13 @@ task.spawn(function()
             end
 
             if bought.Geppo and bought.Soru and bought.Buso and bought.Ken then
-                SetTask("SubTask", "Abilities acquired")
-                -- keep the loop alive cheaply, no more remote calls
                 while task.wait(60) do end
             end
         end)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO-KEN — keep Observation Haki active
--- ═══════════════════════════════════════════════════════════════
+-- Auto-Ken
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
