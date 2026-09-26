@@ -37,6 +37,14 @@ Config = Config or {
     AutoSea2 = true,
     AutoSea3 = true,
     AutoRaidIce_TargetFragments = 5000,
+    Extras = {
+        NoAnimation      = true,
+        AutoRedeemCodes  = true,
+        AutoGachaFruit   = false,
+        GachaMinBeli     = 100000,
+        AutoCollectFruit = false,
+        CollectInterval  = 15,
+    },
 }
 Spirit.Config = Config
 getgenv().Config = Config
@@ -51,11 +59,11 @@ Spirit.MeleesId = {
 }
 
 Spirit.MeleePrices = {
-    ["Black Leg"]       = {Price = {Beli = 150000},   Id = "BlackLeg"},
-    ["Electro"]         = {Price = {Beli = 500000},   Id = "Electro"},
-    ["Fishman Karate"]  = {Price = {Beli = 750000},   Id = "FishmanKarate"},
-    ["Dragon Claw"]     = {Price = {Fragments = 1500},Id = "DragonClaw"},
-    ["Superhuman"]      = {Price = {Beli = 3000000},  Id = "Superhuman"},
+    ["Black Leg"]       = {Price = {Beli = 150000},    Id = "BlackLeg"},
+    ["Electro"]         = {Price = {Beli = 500000},    Id = "Electro"},
+    ["Fishman Karate"]  = {Price = {Beli = 750000},    Id = "FishmanKarate"},
+    ["Dragon Claw"]     = {Price = {Fragments = 1500}, Id = "DragonClaw"},
+    ["Superhuman"]      = {Price = {Beli = 3000000},   Id = "Superhuman"},
     ["Death Step"]      = {Price = {Beli = 2500000, Fragments = 5000}, Id = "DeathStep"},
     ["Sharkman Karate"] = {Price = {Beli = 2500000, Fragments = 5000}, Id = "SharkmanKarate"},
     ["Electric Claw"]   = {Price = {Beli = 2500000, Fragments = 5000}, Id = "ElectricClaw"},
@@ -70,7 +78,6 @@ Spirit.V1ToV2 = {
     ["Dragon Claw"]    = "Dragon Talon",
 }
 
--- V1s at 400, Superhuman at 400, V2s at 400
 Spirit.MASTERY_TRAIN_ORDER = {
     {name = "Black Leg",       target = 400, tier = "V1"},
     {name = "Electro",         target = 400, tier = "V1"},
