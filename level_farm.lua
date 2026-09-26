@@ -1,19 +1,154 @@
--- level_farm.lua — LevelFarm task (no prison, Dark Master extends 175–249)
+-- level_farm.lua — LevelFarm task with underwater city routing
+-- 175–249 runs Dark Master at Skylands (no prison).
+-- 375–449 runs Fishman Warrior/Commando inside the underwater city.
+-- The underwater city sits at X ~61000 in a separate instanced zone —
+-- walking straight there is 58,000 studs of geometry the tween can't
+-- cross. This task routes through the entrance at (4047, -4, -1814)
+-- on the way in and the exit at (61172, -4, 1946) on the way out.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
 
-local Services      = Spirit.Services
-local Workspace     = Spirit.Workspace
+local Services          = Spirit.Services
+local Workspace         = Spirit.Workspace
 local ReplicatedStorage = Services.ReplicatedStorage
-local LocalPlayer   = Spirit.LocalPlayer
-local ScriptStorage = Spirit.ScriptStorage
-local Remotes       = Spirit.Remotes
+local LocalPlayer       = Spirit.LocalPlayer
+local ScriptStorage     = Spirit.ScriptStorage
+local Remotes           = Spirit.Remotes
+
+-- ═══════════════════════════════════════════════════════════════
+-- UNDERWATER CITY ROUTING
+-- Zone boundary is X = 50000. Anything past that is the instanced
+-- underwater map. The entrance and exit are touch/prompt zones the
+-- server watches; we fire them and let the server move us.
+-- ═══════════════════════════════════════════════════════════════
+local UW_ENTRANCE_CF = CFrame.new(4047.98, -4.00, -1814.70)
+local UW_EXIT_CF     = CFrame.new(61172.18, -4.00, 1946.88)
+local UW_ZONE_MIN_X  = 50000
+local UW_TRIGGER_COOLDOWN = 4
+
+local uwState = {lastTrigger = 0, lastAction = ""}
+
+local function inUnderwaterZone(pos)
+    return pos and pos.X > UW_ZONE_MIN_X
+end
+
+local function scanPromptNear(pos, radius)
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") and obj.Enabled then
+            local parent = obj.Parent
+            if parent and parent:IsA("BasePart") then
+                if (parent.Position - pos).Magnitude <= radius then
+                    return obj
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function scanClickNear(pos, radius)
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ClickDetector") then
+            local parent = obj.Parent
+            if parent and parent:IsA("BasePart") then
+                if (parent.Position - pos).Magnitude <= radius then
+                    return obj
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function triggerUnderwater(action)
+    if tick() - uwState.lastTrigger < UW_TRIGGER_COOLDOWN then return false end
+    if uwState.lastAction == action
+       and tick() - uwState.lastTrigger < UW_TRIGGER_COOLDOWN * 2 then
+        return false
+    end
+    uwState.lastTrigger = tick()
+    uwState.lastAction  = action
+
+    local hrp = Spirit.HumanoidRootPart
+    if not hrp then return false end
+
+    local prompt = scanPromptNear(hrp.Position, 35)
+    if prompt and fireproximityprompt then
+        pcall(fireproximityprompt, prompt)
+        print(("[LF] underwater %s — fired prompt %s"):format(action, prompt.Name))
+        return true
+    end
+
+    local click = scanClickNear(hrp.Position, 35)
+    if click and fireclickdetector then
+        pcall(fireclickdetector, click)
+        print(("[LF] underwater %s — fired click %s"):format(action, click.Name))
+        return true
+    end
+
+    local target = (action == "enter") and UW_ENTRANCE_CF or UW_EXIT_CF
+    local nearest, nearestD = nil, 40
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.CanTouch then
+            local d = (obj.Position - target.Position).Magnitude
+            if d < nearestD then
+                nearest, nearestD = obj, d
+            end
+        end
+    end
+    if nearest and firetouchinterest then
+        pcall(function()
+            firetouchinterest(hrp, nearest, 0)
+            task.wait(0.05)
+            firetouchinterest(hrp, nearest, 1)
+        end)
+        print(("[LF] underwater %s — touched %s"):format(action, nearest.Name))
+        return true
+    end
+    return false
+end
+Spirit.TriggerUnderwater = triggerUnderwater
+
+-- Returns true when the routing owns the tick (player needs to move
+-- to the entrance or exit, or fire the trigger). Returns false when
+-- the caller should proceed with its normal tween.
+local function ensureUnderwaterPath(destCF)
+    local hrp = Spirit.HumanoidRootPart
+    if not hrp then return false end
+
+    local playerInUW = inUnderwaterZone(hrp.Position)
+    local destInUW   = inUnderwaterZone(destCF and destCF.Position)
+
+    -- Going in: outside now, destination inside.
+    if destInUW and not playerInUW then
+        local distToEnt = (hrp.Position - UW_ENTRANCE_CF.Position).Magnitude
+        if distToEnt > 15 then
+            Spirit.SetTask("MainTask", "Level Farm | Routing to UW entrance (" .. math.floor(distToEnt) .. ")")
+            Spirit.TweenController.Create(UW_ENTRANCE_CF + Vector3.new(0, 4, 0))
+            return true
+        end
+        triggerUnderwater("enter")
+        return true
+    end
+
+    -- Going out: inside now, destination outside.
+    if playerInUW and not destInUW then
+        local distToExit = (hrp.Position - UW_EXIT_CF.Position).Magnitude
+        if distToExit > 15 then
+            Spirit.SetTask("MainTask", "Level Farm | Routing to UW exit (" .. math.floor(distToExit) .. ")")
+            Spirit.TweenController.Create(UW_EXIT_CF + Vector3.new(0, 4, 0))
+            return true
+        end
+        triggerUnderwater("exit")
+        return true
+    end
+
+    return false
+end
 
 -- ═══════════════════════════════════════════════════════════════
 -- ManualLevelLookup — mob / quest / CFrame per level tier
--- Sea 1: 175–249 collapses to Dark Master (Skylands). Prisoner
---        tiers are skipped entirely — no prison farming.
 -- ═══════════════════════════════════════════════════════════════
 local function ManualLevelLookup()
     local lv = ScriptStorage.PlayerData.Level or 0
@@ -66,7 +201,6 @@ local function ManualLevelLookup()
             PosQ=CFrame.new(-5404.493, 410.791, -693.521)
             PosM=CFrame.new(-4953.20703125, 295.74420166015625, -2899.22900390625)
         elseif lv >= 175 and lv <= 249 then
-            -- Dark Master covers 175 through 249. Prison island skipped.
             Mon="Dark Master"; Qdata=2; Qname="SkyQuest"; NameMon="Dark Master"
             PosQ=CFrame.new(-5404.493, 410.791, -693.521)
             PosM=CFrame.new(-5259.8447265625, 391.3976745605469, -2229.035400390625)
@@ -498,6 +632,11 @@ LF:RegisterMethod("Start", function(step)
         Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel))
         return
     end
+
+    -- UW ROUTING — runs before anything else. If we need to cross the
+    -- underwater boundary, this handles the entrance/exit hop and
+    -- returns so the rest of the tick is skipped.
+    if Q.PosQ and ensureUnderwaterPath(Q.PosQ) then return end
 
     local now = os.time()
     local targetKey = Q.Qname .. "|" .. tostring(Q.Qdata) .. "|" .. Q.NameMon
