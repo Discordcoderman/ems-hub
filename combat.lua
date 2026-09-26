@@ -10,7 +10,6 @@ local LocalPlayer   = Spirit.LocalPlayer
 local ScriptStorage = Spirit.ScriptStorage
 local Remotes       = Spirit.Remotes
 
--- ═══ CheckItem ═══
 local function CheckItem(itemName)
     if not itemName then return false end
     local bp = LocalPlayer:FindFirstChild("Backpack")
@@ -33,7 +32,6 @@ local function CheckItem(itemName)
 end
 Spirit.CheckItem = CheckItem
 
--- ═══ FastAttack ═══
 local Net = ReplicatedStorage:WaitForChild("Modules"):WaitForChild("Net")
 local RE_RegisterAttack = Net:WaitForChild("RE/RegisterAttack")
 local RE_RegisterHit    = Net:WaitForChild("RE/RegisterHit")
@@ -103,14 +101,12 @@ function W_Attack.Attack(_) pcall(function() _G.FastAttack = os.time() end) end
 Spirit.W_Attack = W_Attack
 Spirit.FastAttackReady = FastAttack
 
--- ═══ Aim lock ═══
 local _aimLock = nil
 function Spirit.LockAimPositionTo(pos)
     _aimLock = pos
     task.delay(0.5, function() _aimLock = nil end)
 end
 
--- ═══ CombatController ═══
 local CombatController = {
     GRAB = false,
     GRAB_DISTANCE = (Spirit.SeaIndex == 1) and 250 or 350,
@@ -146,14 +142,12 @@ function CombatController.Search(names)
     end
     table.sort(candidates, function(a, b) return Sort1(a) < Sort1(b) end)
     if anyFound and candidates[1] then return candidates[1] end
-
     for _, npcName in ipairs(names) do
         local npc = ReplicatedStorage:FindFirstChild(npcName)
         if npc then return npc end
     end
 end
 
--- ═══ GRAB — pull same-name mobs near MonResult into one pile ═══
 function CombatController.Grab(mobName)
     pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
     if not CombatController.GRAB then return end
@@ -208,7 +202,6 @@ local function SweetChaliceInCombat()
     return guide._G.InCombat and true or false
 end
 
--- ═══ Main Attack loop ═══
 function CombatController.Attack(names, forceNear, forceDist, callback)
     if SweetChaliceInCombat() then
         pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
@@ -264,18 +257,16 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 
                 if Spirit.CaculateDistance(hrp.Position + Vector3.new(0, 35, 0)) < 150 then
                     if callback then pcall(callback) end
-
                     CombatController.Grab(names[1] or "")
 
                     if MonResult.Name ~= "Core" then
                         if ScriptStorage.PlayerData.Level > 100
                            and (os.time() - unchangedStart) >= CombatController.MAX_ATTACK_DURATION_2
                            and (hum.Health - hum.MaxHealth == 0) then
-                            Spirit.SetTask("SubTask",
-                                "Hop - mob health unchanged (" .. hum.Health .. "/" .. hum.MaxHealth .. ")")
-                            Spirit.alert("stuck", "Mob health unchanged")
-                            _G.Stop = true
-                            ReplicatedStorage.__ServerBrowser:InvokeServer("teleport", game.JobId)
+                            -- No hop — nudge closer and reset the timer
+                            Spirit.SetTask("SubTask", "Mob HP unchanged 60s — repositioning")
+                            unchangedStart = os.time()
+                            Spirit.TweenController.Create(hrp.CFrame + Vector3.new(0, 3, 0))
                         end
 
                         if (os.time() - attackStart) >= CombatController.MAX_ATTACK_DURATION
@@ -328,12 +319,7 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
             end
 
         elseif not forceNear then
-            if (os.time() - LastFound) > 200 then
-                Spirit.alert("MeyyHub", "Error while farming, rejoin")
-                ReplicatedStorage.__ServerBrowser:InvokeServer("teleport", game.JobId)
-                return
-            end
-
+            -- No hop on missing mob. Just tween to its spawn region.
             local region = ScriptStorage.MobRegions[rawName]
             if not region then
                 local spawn = Workspace.Enemies:FindFirstChild(rawName)
@@ -359,17 +345,14 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
     end
 end
 
--- ═══════════════════════════════════════════════════════════════
--- BRING ENEMY — anchored lock (no more fall-through)
--- ═══════════════════════════════════════════════════════════════
+-- ═══ BringEnemy — anchored lock (no fall-through) ═══
 getgenv().BringMonster = getgenv().BringMonster or false
 Spirit.PosMon = Spirit.PosMon or nil
 Spirit.Mon    = Spirit.Mon    or nil
 
-local lockedMobs = {}   -- [model] = true, so we can unlock them when bring turns off
+local lockedMobs = {}
 
 local function LockMobToCF(v, hrp, hum, pinCF)
-    -- Save the mob's original state so we can restore on unlock
     if not lockedMobs[v] then
         lockedMobs[v] = {
             canCollide = hrp.CanCollide,
@@ -380,9 +363,9 @@ local function LockMobToCF(v, hrp, hum, pinCF)
         }
     end
 
-    hrp.CFrame    = pinCF
-    hrp.Anchored  = true       -- ── THE FIX ── keeps the mob absolutely fixed
-    hrp.CanCollide = false     -- cosmetic; anchor already prevents fall
+    hrp.CFrame     = pinCF
+    hrp.Anchored   = true
+    hrp.CanCollide = false
 
     local head = v:FindFirstChild("Head")
     if head and head:IsA("BasePart") then
@@ -394,8 +377,6 @@ local function LockMobToCF(v, hrp, hum, pinCF)
     hum.JumpPower  = 0
     hum.AutoRotate = false
 
-    -- Don't destroy the Animator — just stop visible motion.
-    -- Destroying it can break certain mobs that expect it to exist.
     local anim = hum:FindFirstChildOfClass("Animator")
     if anim then
         pcall(function()
@@ -405,11 +386,8 @@ local function LockMobToCF(v, hrp, hum, pinCF)
         end)
     end
 
-    -- Don't disable scripts either — anchoring handles the freeze.
-    -- Disabling scripts can strip mobs of their per-tick maintenance.
-
     pcall(function() sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge) end)
-    pcall(function() hum:ChangeState(11) end)   -- Physics state
+    pcall(function() hum:ChangeState(11) end)
 end
 
 local function UnlockMob(v)
@@ -476,7 +454,6 @@ task.spawn(function()
     end
 end)
 
--- When bring is turned off, unlock every mob we touched
 task.spawn(function()
     local lastBring = getgenv().BringMonster
     while task.wait(1) do
