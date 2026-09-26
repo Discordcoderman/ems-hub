@@ -1,4 +1,7 @@
 -- level_farm.lua — LevelFarm task
+-- Quest state machine: tracks the last time we SAW the quest GUI. If we
+-- saw it within the last 15 seconds, we're still farming — never walk
+-- back to the giver. Handles mob-respawn gaps and GUI flicker cleanly.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -391,18 +394,18 @@ end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
 -- ═══════════════════════════════════════════════════════════════
--- LevelFarm — with grace period to prevent accept-attack-return loop
+-- LevelFarm
 -- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
-local LastStartQuest = 0
-local LastAbandon = 0
-local LastAcceptAttempt = 0
-local LastTargetQname = nil
-local LastDebug = 0
 
--- Match helper — handles plurals and substrings so "Desert Bandits"
--- matches "Desert Bandit", "Mil. Officer" matches "Military Officer", etc.
+-- Quest tracking state
+local LastTargetQname = nil
+local LastQuestSeen = 0          -- os.time() when GUI or remote last confirmed our target
+local LastAcceptAttempt = 0      -- when we last fired StartQuest
+local LastAbandon = 0
+
+-- Mob-match helper — handles plurals and substrings
 local function mobMatches(guiMob, targetMob)
     if not guiMob or not targetMob then return false end
     if guiMob == targetMob then return true end
@@ -422,6 +425,7 @@ LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
+    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -445,35 +449,43 @@ LF:RegisterMethod("Start", function(step)
 
     local now = os.time()
 
-    -- Tier change → reset timers
+    -- Tier change resets all tracking
     if LastTargetQname ~= Q.Qname then
         print(("[LF] tier change: %s → %s (lv=%d)"):format(
             tostring(LastTargetQname), tostring(Q.Qname), currentLevel))
         LastTargetQname = Q.Qname
-        LastAbandon = 0
-        LastStartQuest = 0
+        LastQuestSeen = 0
         LastAcceptAttempt = 0
+        LastAbandon = 0
+        pcall(function() Spirit.QuestController:Reset() end)
     end
 
+    -- Read both sources
     local guiMob = Spirit.GetCurrentClaimQuest()
     local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
 
-    -- Debug every 3s
-    if now - LastDebug > 3 then
-        LastDebug = now
-        print(("[LF] lv=%d target=%s gui=%q remote=%q"):format(
-            currentLevel, Q.Mon, tostring(guiMob), tostring(remoteQuest)))
+    local guiMatches = guiMob and mobMatches(guiMob, Q.NameMon)
+    local remoteMatches = (remoteQuest == Q.Qname)
+
+    -- Mark the moment we saw our target quest
+    if guiMatches or remoteMatches then
+        LastQuestSeen = now
     end
 
-    -- Right quest is active in either source → attack
-    if (guiMob and mobMatches(guiMob, Q.NameMon)) or remoteQuest == Q.Qname then
+    -- Quest is "active" if we've seen it within the last 15 seconds.
+    -- This window covers mob-respawn gaps and GUI flicker.
+    local questActive = (now - LastQuestSeen < 15)
+
+    if questActive then
+        -- Attack. CombatController handles the "no mobs alive" case by
+        -- tweening to the spawn region and waiting for respawns.
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
         Spirit.CombatController.Attack(Q.Mon)
         return
     end
 
-    -- Wrong quest shown in GUI → abandon
-    if guiMob then
+    -- Wrong quest shown in GUI (different mob than target) → abandon
+    if guiMob and not guiMatches then
         if now - LastAbandon > 5 then
             LastAbandon = now
             print("[LF] abandoning GUI quest: " .. tostring(guiMob))
@@ -483,16 +495,7 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- ── No quest anywhere. Grace period prevents oscillation. ──
-    -- If we recently fired StartQuest, wait for the GUI to update
-    -- before walking back to the giver.
-    if now - LastAcceptAttempt < 8 then
-        local remaining = 8 - (now - LastAcceptAttempt)
-        Spirit.SetTask("MainTask", "Level Farm | Waiting " .. remaining .. "s for " .. Q.Mon)
-        return
-    end
-
-    -- Walk to giver
+    -- No active quest. Walk to giver.
     if not Q.PosQ then return end
     local dist = Spirit.CaculateDistance(Q.PosQ)
 
@@ -502,14 +505,15 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- At giver — fire StartQuest and set grace period
-    LastAcceptAttempt = now
-    LastStartQuest = now
-    local ok, res = pcall(function()
-        return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-    end)
-    print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
-        tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
+    -- At giver. Fire StartQuest every 5s.
+    if now - LastAcceptAttempt > 5 then
+        LastAcceptAttempt = now
+        local ok, res = pcall(function()
+            return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+        end)
+        print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
+            tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
+    end
     Spirit.SetTask("MainTask", "Level Farm | Accepting " .. Q.Mon)
 end)
 
