@@ -42,6 +42,12 @@ end)
 
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
+-- ═══════════════════════════════════════════════════════════════
+-- ABILITY BUYER
+--   Geppo, Soru → level 20+
+--   Buso Haki   → level 100+
+--   Ken (Instinct / Observation) → level 700+ ONLY
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
     repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
@@ -59,31 +65,50 @@ task.spawn(function()
             local lv = ScriptStorage.PlayerData.Level or 0
             if lv < 20 then return end
 
+            -- Geppo
             if not bought.Geppo then
-                SetTask("SubTask", "Buying Geppo...")
                 local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Geppo") end)
-                if ok then bought.Geppo = true end
-                task.wait(1)
+                if ok then
+                    bought.Geppo = true
+                    print("[player] Geppo purchased")
+                end
+                task.wait(0.5)
             end
+
+            -- Soru
             if not bought.Soru then
                 local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
-                if ok then bought.Soru = true end
-                task.wait(1)
+                if ok then
+                    bought.Soru = true
+                    print("[player] Soru purchased")
+                end
+                task.wait(0.5)
             end
+
+            -- Buso Haki — level 100+
             if lv >= 100 then
                 if not bought.Buso and not hasTag("Buso") then
-                    SetTask("SubTask", "Buying Buso Haki...")
                     local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Buso") end)
-                    if ok then bought.Buso = true end
-                    task.wait(1)
-                end
-                if not bought.Ken and not hasTag("Ken") then
-                    SetTask("SubTask", "Buying Observation Haki...")
-                    local ok = pcall(function() return Remotes.CommF_:InvokeServer("KenTalk", "Buy") end)
-                    if ok then bought.Ken = true end
-                    task.wait(1)
+                    if ok then
+                        bought.Buso = true
+                        print("[player] Buso Haki purchased")
+                    end
+                    task.wait(0.5)
                 end
             end
+
+            -- Ken / Instinct / Observation Haki — STRICTLY level 700+
+            if lv >= 700 then
+                if not bought.Ken and not hasTag("Ken") then
+                    local ok = pcall(function() return Remotes.CommF_:InvokeServer("KenTalk", "Buy") end)
+                    if ok then
+                        bought.Ken = true
+                        print("[player] Ken (Observation Haki) purchased")
+                    end
+                    task.wait(0.5)
+                end
+            end
+
             if bought.Geppo and bought.Soru and bought.Buso and bought.Ken then
                 while task.wait(60) do end
             end
@@ -91,7 +116,9 @@ task.spawn(function()
     end
 end)
 
--- Auto-aura: keep Buso Haki on
+-- ═══════════════════════════════════════════════════════════════
+-- AUTO AURA — keep Buso Haki active
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -105,11 +132,15 @@ task.spawn(function()
     end
 end)
 
--- Auto-ken
+-- ═══════════════════════════════════════════════════════════════
+-- AUTO KEN — only if the player actually has Ken (level 700+)
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
             if not (Spirit.Config and Spirit.Config.AutoKen) then return end
+            local lv = ScriptStorage.PlayerData.Level or 0
+            if lv < 700 then return end
             local char = Spirit.Character
             if not char then return end
             if char:FindFirstChild("HasKen") then return end
