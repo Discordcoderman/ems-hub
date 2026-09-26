@@ -199,12 +199,36 @@ MC:RegisterMethod("Start", function()
                 return
             end
 
-            SetTask("MainTask", "Auto Melee | " .. m.name .. " mastery " .. mst .. "/" .. m.target)
+            -- ─── Owned, needs mastery. TRAIN IT. ───
+            SetTask("MainTask", "Auto Melee | Training " .. m.name .. " " .. mst .. "/" .. m.target)
+
+            -- Force combat to use this weapon
+            _G.SelectWeapon = m.name
             pcall(function()
                 Spirit.FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(m.name)
             end)
+
+            -- Attack the current quest mob (keeps leveling while training melee)
+            local mob = nil
+            if Spirit.ManualLevelLookup then
+                local ok, lookup = pcall(Spirit.ManualLevelLookup)
+                if ok and lookup and lookup.Mon then mob = lookup.Mon end
+            end
+
+            if mob then
+                Spirit.CombatController.Attack(mob)
+            else
+                local nearest = Spirit.GetMonAsSortedRange()[1]
+                if nearest then Spirit.CombatController.Attack(nearest.Name) end
+            end
             return
         end
+    end
+
+    -- All at target — clear the weapon override so normal farming picks
+    if _G.SelectWeapon and CheckItem(_G.SelectWeapon)
+       and (ScriptStorage.Melees[_G.SelectWeapon] or 0) >= 400 then
+        _G.SelectWeapon = nil
     end
 
     SetTask("MainTask", "Auto Full Melee | Complete")
