@@ -1,12 +1,16 @@
--- mele.lua — MeleesController (full requirements)
+-- mele.lua — MeleesController (full requirements + prison state machine)
 -- Full 10-melee SEQUENCE: V1 base → Superhuman → V2 upgrades → Godhuman.
 -- Auto-buys the next unowned melee the moment every prereq is met:
 -- level, mastery, key items, fire essence, materials, currency.
--- Buying overrides everything; when nothing is buyable the dispatcher
--- falls through to raids / fruit / level farm.
--- Dragon Claw runs three raids before purchase.
--- Prison-zone check fires Escape from Alcatraz provokes and kills the
--- three spawned NPCs.
+--
+-- PRISON — Escape from Alcatraz:
+--   When the character is inside the prison zone, this task overrides
+--   everything. It runs a four-phase state machine:
+--     provoke → fire the three BonusMoments remotes, once
+--     spawn   → wait for Raft / Puncher / Digger to appear
+--     kill    → attack whichever is alive
+--     done    → all three cleared, reset, release the dispatcher
+--   Leaving the zone at any point resets the machine.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[mele] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
@@ -27,15 +31,15 @@ local MIN_PLAYER_LEVEL = 300
 -- so Godhuman's prereq set is satisfied.
 -- ═══════════════════════════════════════════════════════════════
 local TRAIN_SEQUENCE = {
-    {name = "Black Leg",       target = 500},   -- Superhuman 300 + Death Step 500
-    {name = "Electro",         target = 500},   -- Superhuman 300 + Electric Claw 500
-    {name = "Fishman Karate",  target = 500},   -- Superhuman 300 + Sharkman Karate 500
-    {name = "Dragon Claw",     target = 500},   -- Dragon Talon 500
-    {name = "Superhuman",      target = 400},   -- Godhuman 400
-    {name = "Death Step",      target = 400},   -- Godhuman 400
-    {name = "Sharkman Karate", target = 400},   -- Godhuman 400
-    {name = "Electric Claw",   target = 400},   -- Godhuman 400
-    {name = "Dragon Talon",    target = 400},   -- Godhuman 400
+    {name = "Black Leg",       target = 500},
+    {name = "Electro",         target = 500},
+    {name = "Fishman Karate",  target = 500},
+    {name = "Dragon Claw",     target = 500},
+    {name = "Superhuman",      target = 400},
+    {name = "Death Step",      target = 400},
+    {name = "Sharkman Karate", target = 400},
+    {name = "Electric Claw",   target = 400},
+    {name = "Dragon Talon",    target = 400},
 }
 
 -- ═══════════════════════════════════════════════════════════════
@@ -53,7 +57,7 @@ local BUY_SEQUENCE = {
 
     { name = "Dragon Claw",     key = "DragonClaw",     playerLevel = 300,
       price = {Fragments = 1500},
-      needRaids = 3 },   -- three raids before purchase
+      needRaids = 3 },
 
     { name = "Superhuman",      key = "Superhuman",     playerLevel = 300,
       price = {Beli = 3000000},
@@ -133,9 +137,6 @@ local function raidsDoneFor(entry)
     return _G.MeleeRaidsDone or 0
 end
 
--- Level, mastery, key items, fire essence, materials. Excludes raid
--- and currency — raids handled separately, currency checked in the
--- final combined gate.
 local function HasStaticReqs(entry)
     local lvl = ScriptStorage.PlayerData.Level or 0
     if lvl < MIN_PLAYER_LEVEL then return false end
@@ -193,44 +194,121 @@ local function GoToTeacher(meleeName)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- PRISON — Escape from Alcatraz
+-- PRISON — Escape from Alcatraz state machine
+--   phase = "idle"     → outside the zone, nothing to do
+--   phase = "provoke"  → fire the three remotes, then go to "wait"
+--   phase = "wait"     → poll for spawned NPCs (up to SPAWN_TIMEOUT)
+--   phase = "kill"     → at least one NPC alive, attack it
+--   phase = "done"     → all three cleared, reset
+-- Leaving the zone at any phase resets the machine.
 -- ═══════════════════════════════════════════════════════════════
 local PRISON_ANCHOR  = Vector3.new(5207, 20, 738)
 local PRISON_RADIUS  = 500
 local PRISON_TARGETS = {"Raft", "Puncher", "Digger"}
-local PRISON_FIRE_COOLDOWN = 20
+local SPAWN_TIMEOUT  = 25   -- seconds to wait for spawns after provoke
+local RETRY_COOLDOWN = 30   -- seconds before re-firing after a miss
 
-local prisonLastFire = 0
+local prison = {
+    phase      = "idle",
+    firedAt    = 0,
+    lastRetry  = 0,
+    sawAnyNPC  = false,
+}
 
-local function inPrisonArea()
+local function prisonReset()
+    prison.phase     = "idle"
+    prison.firedAt   = 0
+    prison.lastRetry = 0
+    prison.sawAnyNPC = false
+end
+
+local function inPrisonZone()
     local hrp = Spirit.HumanoidRootPart
     if not hrp then return false end
     return (hrp.Position - PRISON_ANCHOR).Magnitude < PRISON_RADIUS
 end
 
-local function prisonNPCAlive()
+local function alivePrisonNPCs()
+    local alive = {}
     for _, name in ipairs(PRISON_TARGETS) do
         local npc = workspace.Enemies:FindFirstChild(name)
         if npc and npc:FindFirstChild("Humanoid") and npc.Humanoid.Health > 0 then
-            return name
+            table.insert(alive, name)
         end
     end
-    return nil
+    return alive
 end
 
-local function runPrisonProvokes()
-    if os.time() - prisonLastFire < PRISON_FIRE_COOLDOWN then return end
-    prisonLastFire = os.time()
-
+local function fireProvokes()
     local rf = ReplicatedStorage.Remotes:FindFirstChild("BonusMomentsRemoteFunction")
-    if not rf then return end
+    if not rf then
+        print("[mele] BonusMomentsRemoteFunction missing — prison aborted")
+        prisonReset()
+        return false
+    end
     for _, target in ipairs(PRISON_TARGETS) do
         pcall(function()
             rf:InvokeServer("Escape from Alcatraz", "Provoke", target)
         end)
         task.wait(0.4)
     end
-    print("[mele] fired Escape from Alcatraz provokes")
+    print("[mele] fired Escape from Alcatraz — all three provokes")
+    return true
+end
+
+-- Called from Refresh. Returns an action table or nil.
+local function prisonTick()
+    -- Outside the zone → make sure the state machine is reset.
+    if not inPrisonZone() then
+        if prison.phase ~= "idle" then prisonReset() end
+        return nil
+    end
+
+    local alive = alivePrisonNPCs()
+
+    -- Any NPC alive → we're in the kill phase. Refresh resets the
+    -- wait timer so the "done" exit can't fire mid-fight.
+    if #alive > 0 then
+        prison.phase     = "kill"
+        prison.sawAnyNPC = true
+        return {kind = "prison", action = "kill", target = alive[1]}
+    end
+
+    -- All previously spawned NPCs are now dead. Only exit if we've
+    -- actually seen them spawn (so "idle → no spawns yet" doesn't
+    -- falsely trigger a completion).
+    if prison.phase == "kill" and prison.sawAnyNPC then
+        print("[mele] prison escape complete — all three down")
+        prisonReset()
+        return nil
+    end
+
+    -- No NPCs yet. Either fire the provokes, or wait for spawns.
+    if prison.phase == "idle" then
+        prison.phase = "provoke"
+    end
+
+    if prison.phase == "provoke" then
+        if fireProvokes() then
+            prison.firedAt = tick()
+            prison.phase   = "wait"
+        end
+        return {kind = "prison", action = "fired"}
+    end
+
+    if prison.phase == "wait" then
+        local elapsed = tick() - prison.firedAt
+        if elapsed > SPAWN_TIMEOUT then
+            -- Nothing spawned. Re-provoke if the retry cooldown is up.
+            if tick() - prison.lastRetry > RETRY_COOLDOWN then
+                prison.lastRetry = tick()
+                prison.phase     = "provoke"
+            end
+        end
+        return {kind = "prison", action = "waiting"}
+    end
+
+    return nil
 end
 
 -- ═══════════════════════════════════════════════════════════════
@@ -249,13 +327,11 @@ MC:RegisterMethod("Refresh", function()
         return nil
     end
 
-    -- 1) PRISON — overrides everything while inside.
-    if inPrisonArea() then
-        local npc = prisonNPCAlive()
-        if npc or (os.time() - prisonLastFire > PRISON_FIRE_COOLDOWN) then
-            _G.MeleeRaidRequest = false
-            return {kind = "prison", npc = npc}
-        end
+    -- 1) PRISON — overrides every other branch.
+    local prisonAction = prisonTick()
+    if prisonAction then
+        _G.MeleeRaidRequest = false
+        return prisonAction
     end
 
     -- 2) BUY — first unowned melee in order.
@@ -265,9 +341,7 @@ MC:RegisterMethod("Refresh", function()
         return nil
     end
 
-    -- Raid gate — fires before resource checks. If the next melee
-    -- needs N raids and we haven't cleared N yet, hand off to
-    -- RaidController via the flag.
+    -- Raid gate — Dragon Claw needs 3 raid clears before the buy fires.
     if next_buy.needRaids and raidsDoneFor(next_buy) < next_buy.needRaids then
         _G.MeleeRaidRequest = true
         SetTask("MainTask", next_buy.name .. " prep | Raids "
@@ -275,13 +349,11 @@ MC:RegisterMethod("Refresh", function()
         return nil
     end
 
-    -- Static requirements + currency. If both pass → buy.
     if HasStaticReqs(next_buy) and HasPrice(next_buy) then
         _G.MeleeRaidRequest = false
         return {kind = "buy", entry = next_buy}
     end
 
-    -- Nothing to buy yet. Let training loop grind the prereqs.
     _G.MeleeRaidRequest = false
     return nil
 end)
@@ -290,12 +362,13 @@ MC:RegisterMethod("Start", function(action)
     if not action then return end
 
     if action.kind == "prison" then
-        SetTask("MainTask", "Prison | Escape from Alcatraz")
-        if not action.npc then
-            runPrisonProvokes()
-        else
-            SetTask("SubTask", "Killing " .. action.npc)
-            Spirit.CombatController.Attack(action.npc)
+        if action.action == "kill" and action.target then
+            SetTask("MainTask", "Prison | Killing " .. action.target)
+            Spirit.CombatController.Attack(action.target)
+        elseif action.action == "fired" then
+            SetTask("MainTask", "Prison | Provoked all three — waiting for spawns")
+        elseif action.action == "waiting" then
+            SetTask("MainTask", "Prison | Waiting for Raft / Puncher / Digger")
         end
         return
     end
@@ -313,9 +386,8 @@ MC:RegisterMethod("Start", function(action)
         task.wait(0.6)
         Spirit.RefreshInventory()
 
-        -- Post-purchase bookkeeping
         if entry.name == "Dragon Claw" then
-            _G.MeleeRaidsDone = 0   -- reset raid counter for next raid-gated melee
+            _G.MeleeRaidsDone = 0
         end
         print("[mele] purchased " .. entry.name)
         return
