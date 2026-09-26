@@ -441,13 +441,15 @@ task.spawn(function()
     end
 end)
 
--- Team set — waits for Config to be published
+-- ═══════════════════════════════════════════════════════════════
+-- TEAM SET — waits for Config, then spams SetTeam for 20s
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local deadline = os.time() + 30
     while os.time() < deadline do
         local cfg = Spirit.Config or getgenv().Config
         if cfg and cfg.Team then break end
-        task.wait(0.25)
+        task.wait(0.1)
     end
 
     local cfg = Spirit.Config or getgenv().Config
@@ -455,20 +457,40 @@ task.spawn(function()
         Spirit.Report("[team] Config.Team never published — skipping SetTeam")
         return
     end
+    local teamName = cfg.Team
 
-    local team = cfg.Team
-
-    if not Spirit.Character then
-        repeat task.wait(0.25) until Spirit.Character
+    if not (Spirit.Humanoid and Spirit.Humanoid.Health > 0) then
+        local charDeadline = os.time() + 60
+        while os.time() < charDeadline do
+            local hum = Spirit.Humanoid
+            if hum and hum.Health > 0 then break end
+            task.wait(0.25)
+        end
     end
 
-    for attempt = 1, 5 do
-        pcall(function()
-            game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", team)
+    if not (Spirit.Humanoid and Spirit.Humanoid.Health > 0) then
+        Spirit.Report("[team] no live Humanoid after 60s — aborting SetTeam")
+        return
+    end
+
+    print("[Spirit] Setting team → " .. tostring(teamName))
+
+    local endTime = os.time() + 20
+    local logsRemaining = 5
+    while os.time() < endTime do
+        local ok, result = pcall(function()
+            return game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", teamName)
         end)
-        task.wait(2)
+        if logsRemaining > 0 then
+            print(("[Spirit] SetTeam → %s | ok=%s result=%s"):format(
+                tostring(teamName), tostring(ok), tostring(result)))
+            logsRemaining = logsRemaining - 1
+        end
+        task.wait(0.5)
     end
-    Spirit.SetTask("SubTask", "Team: " .. tostring(team))
+
+    Spirit.SetTask("SubTask", "Team: " .. tostring(teamName))
+    print("[Spirit] SetTeam loop finished")
 end)
 
 task.spawn(function()
