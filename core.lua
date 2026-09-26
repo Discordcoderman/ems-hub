@@ -20,18 +20,24 @@ local LocalPlayer = Players.LocalPlayer
 Spirit.LocalPlayer = LocalPlayer
 
 local function bindCharacter(char)
-    if not char then return end
+    if not char then return nil, nil, nil end
+    local hum = char:WaitForChild("Humanoid", 30)
+    local hrp = char:WaitForChild("HumanoidRootPart", 30)
+    
     Spirit.Character        = char
-    Spirit.Humanoid         = char:WaitForChild("Humanoid", 30)
-    Spirit.HumanoidRootPart = char:WaitForChild("HumanoidRootPart", 30)
-    if Spirit.Humanoid then
-        Spirit.Humanoid.Died:Connect(function()
+    Spirit.Humanoid         = hum
+    Spirit.HumanoidRootPart = hrp
+
+    if hum then
+        hum.Died:Connect(function()
             Spirit.Character = nil
             Spirit.Humanoid = nil
             Spirit.HumanoidRootPart = nil
         end)
     end
+    return char, hum, hrp
 end
+
 if LocalPlayer.Character then bindCharacter(LocalPlayer.Character) end
 LocalPlayer.CharacterAdded:Connect(bindCharacter)
 
@@ -400,10 +406,9 @@ local function RegisterLocalPlayerEventsConnection()
         pcall(function() c:Disconnect() end)
     end
 
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    bindCharacter(char)
+    local rawChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local char, hum = bindCharacter(rawChar)
 
-    local hum = Spirit.Humanoid or char:WaitForChild("Humanoid", 30)
     if not hum then
         local conn
         conn = LocalPlayer.CharacterAdded:Connect(function()
