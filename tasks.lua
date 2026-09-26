@@ -83,7 +83,6 @@ function FunctionsHandler.SynchorizeUntilModuleLoaded(module, timeout)
 end
 
 local TASKS_TO_REGISTER = {
-    "PrisonEscape",
     "LocalPlayerController","ExpRedeem","LevelFarm","Saber","Rengoku","Yama","Tushita",
     "SpikeyTrident","SharkAchor","Pole","FoxLamp","DarkDagger","Canvander","BuddySword",
     "HallowScythe","CursedDualKatana","AcidumRifle","Kabucha","VenomBow","SoulGuitar",
@@ -121,10 +120,8 @@ Spirit.ParsingTimes = ParsingTimes
 local warnedTasks = {}
 Spirit.CurrentTask = nil
 
--- ── Fruit-priority short-circuit ──
--- When _G.FruitPriorityActive is set, only CollectDrops gets the
--- dispatcher. Everything else (prison, bosses, raids, farm) waits —
--- so a committed fruit tween can't be cancelled mid-flight.
+-- Fruit-priority short-circuit: while a fruit tween is committed,
+-- only CollectDrops gets the dispatcher.
 local function runFruitPriority()
     if not _G.FruitPriorityActive then return false end
     local cd = FunctionsHandler.CollectDrops
@@ -139,30 +136,7 @@ local function runFruitPriority()
             return true
         end
     end
-    -- Flag was true but CollectDrops yielded nothing — release.
     _G.FruitPriorityActive = false
-    return false
-end
-
--- ── Prison escape pre-check ──
--- Runs before TasksOrder so the escape is the first thing done at
--- Prison island. Yields to fruit collection (returns nothing if the
--- fruit flag is set — see prison_escape.Refresh).
-local function runPrisonEscape()
-    local pe = FunctionsHandler.PrisonEscape
-    if not pe or not pe.Initalized or not pe.Methods or not pe.Methods.Refresh then
-        return false
-    end
-    local r = pe.Methods.Refresh:Call(Spirit.ParsingTimes < 100)
-    if r then
-        Spirit.ParsingTimes = Spirit.ParsingTimes + 1
-        Spirit.CurrentTask = "PrisonEscape"
-        if Spirit.EmsUI and Spirit.EmsUI.SetText then
-            Spirit.EmsUI.SetText("DebugLine", "PrisonEscape")
-        end
-        if pe.Methods.Start then pe.Methods.Start:Call(r) end
-        return true
-    end
     return false
 end
 
@@ -171,7 +145,6 @@ function Spirit.RefreshTasksData()
     if _G.SeaTransitionActive then return end
 
     if runFruitPriority() then return end
-    if runPrisonEscape() then return end
 
     for _, taskName in ipairs(Spirit.TasksOrder) do
         local handler = FunctionsHandler[taskName]
