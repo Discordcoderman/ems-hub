@@ -97,16 +97,24 @@ for _, taskName in ipairs(TASKS_TO_REGISTER) do
     FunctionsHandler[taskName]:Register()
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- TASK ORDER — first match wins.
+-- Saber hoisted to the top priority block: at level 200+, until the
+-- Saber item is in the backpack, it claims every dispatcher tick.
+-- Once Saber is owned, Saber.Refresh returns nil and the rest of the
+-- order resumes. No manual toggle needed.
+-- ═══════════════════════════════════════════════════════════════
 Spirit.TasksOrder = {
     "MeleesController",
     "CollectDrops",
+    "Saber",                 -- priority one-shot at level 200
 
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
 
     "LevelFarm",
 
-    "Tushita", "Yama", "Saber", "CursedDualKatana", "SoulGuitar",
+    "Tushita", "Yama", "CursedDualKatana", "SoulGuitar",
     "EvoRace", "RaceAwakening",
 
     "Trevor", "UtillyItemsActivitation",
@@ -120,8 +128,6 @@ Spirit.ParsingTimes = ParsingTimes
 local warnedTasks = {}
 Spirit.CurrentTask = nil
 
--- Fruit-priority short-circuit: while a fruit tween is committed,
--- only CollectDrops gets the dispatcher.
 local function runFruitPriority()
     if not _G.FruitPriorityActive then return false end
     local cd = FunctionsHandler.CollectDrops
