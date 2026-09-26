@@ -1,4 +1,4 @@
--- level_farm.lua — LevelFarm task, GUI-driven quest acceptance
+-- level_farm.lua — LevelFarm task
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -392,7 +392,7 @@ Spirit.ManualLevelLookup = ManualLevelLookup
 
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
-local LevelFarmTTL = 0
+local LastStartQuest = 0
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
@@ -422,121 +422,89 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
-    if step == 2 then
+    if step == 2 or step == 3 then
+        local mobName = (step == 2) and "Shanda" or "God's Guard"
+        local skyCF = (step == 2) and CFrame.new(-7894, 5547, -380) or CFrame.new(-4650, 872, -1775)
+
         if Spirit.SeaIndex == 1 then
             local loc = LocalPlayer:GetAttribute("CurrentLocation")
             if not loc or (loc ~= "Skylands" and loc ~= "Upper Skylands") then
-                Spirit.TweenController.Create(CFrame.new(-7894, 5547, -380))
+                Spirit.TweenController.Create(skyCF)
                 task.wait(1)
                 return
             end
         end
-        Spirit.SetTask("MainTask", "Level Farm | Shanda | Upper Skylands")
-        local foundMob = false
+
+        Spirit.SetTask("MainTask", "Level Farm | " .. mobName .. " | Skylands")
+
         for _, folder in ipairs({Workspace.Enemies, ReplicatedStorage}) do
             for _, v in ipairs(folder:GetChildren()) do
-                if v.Name == "Shanda" and v:IsA("Model") then
+                if v.Name == mobName and v:IsA("Model") then
                     local hum = v:FindFirstChildOfClass("Humanoid")
                     if hum and hum.Health > 0 then
-                        foundMob = true
-                        Spirit.SetTask("SubTask", "Attacking Shanda")
-                        Spirit.CombatController.Attack("Shanda")
-                        break
+                        Spirit.CombatController.Attack(mobName)
+                        return
                     end
                 end
             end
-            if foundMob then break end
         end
-        if not foundMob then
-            local spawnFolder = ReplicatedStorage:FindFirstChild("FortBuilderReplicatedSpawnPositionsFolder")
-            local anchor = spawnFolder and spawnFolder:FindFirstChild("Shanda")
-            if anchor then
-                Spirit.TweenController.Create(anchor:GetPivot() + Vector3.new(0, 25, 0))
-            else
-                Spirit.TweenController.Create(CFrame.new(-7783, 5576, -519))
-            end
+        local spawnFolder = ReplicatedStorage:FindFirstChild("FortBuilderReplicatedSpawnPositionsFolder")
+        local anchor = spawnFolder and spawnFolder:FindFirstChild(mobName)
+        if anchor then
+            Spirit.TweenController.Create(anchor:GetPivot() + Vector3.new(0, 25, 0))
         end
+        return
+    end
 
-    elseif step == 3 then
-        if Spirit.SeaIndex == 1 then
-            local loc = LocalPlayer:GetAttribute("CurrentLocation")
-            if not loc or (loc ~= "Skylands" and loc ~= "Upper Skylands") then
-                Spirit.TweenController.Create(CFrame.new(-4650, 872, -1775))
-                task.wait(1.5)
-                return
-            end
-        end
-        Spirit.SetTask("MainTask", "Level Farm | God's Guard | Skylands")
-        local foundMob = false
-        for _, folder in ipairs({Workspace.Enemies, ReplicatedStorage}) do
-            for _, v in ipairs(folder:GetChildren()) do
-                if v.Name == "God's Guard" and v:IsA("Model") then
-                    local hum = v:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health > 0 then
-                        foundMob = true
-                        Spirit.SetTask("SubTask", "Attacking God's Guard")
-                        Spirit.CombatController.Attack("God's Guard")
-                        break
-                    end
-                end
-            end
-            if foundMob then break end
-        end
-        if not foundMob then
-            local spawnFolder = ReplicatedStorage:FindFirstChild("FortBuilderReplicatedSpawnPositionsFolder")
-            local anchor = spawnFolder and spawnFolder:FindFirstChild("God's Guard")
-            if anchor then
-                Spirit.TweenController.Create(anchor:GetPivot() + Vector3.new(0, 25, 0))
-            end
-        end
+    local Q = ManualLevelLookup()
+    if not Q then
+        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel) .. " sea=" .. tostring(Spirit.SeaIndex))
+        return
+    end
 
-    else
-        local Q = ManualLevelLookup()
-        if not Q then
-            Spirit.Report("LevelFarm: ManualLevelLookup nil (lv=" .. tostring(currentLevel) .. ", sea=" .. tostring(Spirit.SeaIndex) .. ")")
+    local guiMob, guiText = Spirit.GetCurrentClaimQuest()
+
+    if guiMob then
+        local matches = (guiMob == Q.NameMon)
+                     or (guiMob == Q.NameMon .. "s")
+                     or (guiText and string.find(guiText, Q.NameMon, 1, true) ~= nil)
+
+        if not matches then
+            Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(guiMob))
+            if os.time() - LastStartQuest > 3 then
+                LastStartQuest = os.time()
+                Spirit.J.AbandonQuest(Spirit.J)
+            end
             return
         end
-        Spirit.SetTask("SubTask", Q.NameMon .. " | " .. Q.Mon)
 
-        local guiMob, guiText = Spirit.GetCurrentClaimQuest()
+        Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
+        Spirit.CombatController.Attack(Q.Mon)
+        return
+    end
 
-        if guiMob then
-            local matches = (guiMob == Q.NameMon)
-                         or (guiMob == Q.NameMon .. "s")
-                         or (guiText and string.find(guiText, Q.NameMon, 1, true) ~= nil)
+    if not Q.PosQ then return end
+    local distToNPC = Spirit.CaculateDistance(Q.PosQ)
 
-            if not matches then
-                Spirit.SetTask("MainTask", "Level Farm | Abandoning stale quest: " .. tostring(guiMob))
-                return Spirit.J.AbandonQuest(Spirit.J)
-            end
+    if distToNPC > 15 then
+        Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " giver (" .. math.floor(distToNPC) .. ")")
+        Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
+        return
+    end
 
-            Spirit.CombatController.Attack(Q.Mon)
+    if os.time() - LastStartQuest < 4 then return end
+    LastStartQuest = os.time()
 
-        else
-            if not Q.PosQ then return end
+    Spirit.SetTask("MainTask", "Level Farm | Accepting " .. Q.Mon .. " quest")
+    Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+    task.wait(2)
 
-            local distToNPC = Spirit.CaculateDistance(Q.PosQ)
-            if distToNPC > 15 then
-                Spirit.SetTask("MainTask", "Level Farm | Walking to NPC (dist " .. math.floor(distToNPC) .. ")")
-                Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-                return
-            end
-
-            Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accepting quest")
-            task.wait(0.5)
-            LevelFarmTTL = 0
-            Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-
-            task.wait(1.0)
-
-            local guiMob2 = Spirit.GetCurrentClaimQuest()
-            if guiMob2 then
-                Spirit.SetTask("SubTask", "Quest accepted: " .. tostring(guiMob2))
-                Spirit.CombatController.Attack(Q.Mon)
-            else
-                Spirit.SetTask("MainTask", "Level Farm | Waiting for quest to register...")
-            end
-        end
+    local newMob, _ = Spirit.GetCurrentClaimQuest()
+    if newMob then
+        Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accepted")
+        Spirit.CombatController.Attack(Q.Mon)
+    else
+        Spirit.SetTask("MainTask", "Level Farm | Waiting for " .. Q.Mon .. " quest to register...")
     end
 end)
 
