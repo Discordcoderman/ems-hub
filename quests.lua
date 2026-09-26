@@ -100,23 +100,25 @@ function J.StartQuest(_self, questId, questIndex)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- Broad GUI scan — walks every ScreenGui under PlayerGui,
--- looking for any text that mentions "Defeat".
+-- Broad GUI scan — walks the entire PlayerGui tree, no visibility
+-- check (parent may be invisible during the accept window while the
+-- text is still populated).
 -- ═══════════════════════════════════════════════════════════════
 local function parseQuestText(text)
-    -- Standard "Defeat 7 Snow Bandits" → "Snow Bandits"
+    if not text or text == "" then return nil end
+    text = tostring(text)
+
+    -- Strip RichText tags
+    text = text:gsub("<[^>]->", "")
+
+    -- Standard "Defeat 7 Snow Bandits"
     local mob = text:match("Defeat%s+%d+%s+(.-)%s*[%(%[]")
     if not mob then
         mob = text:match("Defeat%s+%d+%s+(.+)$")
     end
-    -- Fallback: any "N Name" pattern after "Defeat"
-    if not mob then
-        mob = text:match("Defeat%s+(%d+)%s+(.+)$")
-        if mob then mob = text:match("%d+%s+(.+)$") end
-    end
     if not mob or mob == "" then return nil end
-    mob = mob:gsub("%s+$", "")
-    mob = mob:gsub("^%s+", "")
+    mob = mob:gsub("^%s+", ""):gsub("%s+$", "")
+    mob = mob:gsub("%s*[%(%[].*$", "")   -- strip trailing "(Lv. X)"
     return mob
 end
 
@@ -124,35 +126,43 @@ local function findQuestMob()
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
     if not pg then return nil, "no PlayerGui" end
 
-    -- Pass 1: scan every ScreenGui, every TextLabel AND TextButton,
-    -- ignore Visibility (parent might be invisible while child text is set)
-    for _, gui in ipairs(pg:GetChildren()) do
-        if gui:IsA("ScreenGui") or gui:IsA("LayerCollector") then
-            for _, obj in ipairs(gui:GetDescendants()) do
-                if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Text and obj.Text ~= "" then
-                    local t = tostring(obj.Text)
-                    if t:find("Defeat", 1, true) then
-                        local mob = parseQuestText(t)
-                        if mob then
-                            return mob, t
-                        end
-                    end
-                end
+    -- Pass 1: known path (PlayerGui.Main.Quest.Container.QuestTitle.Title)
+    local ok1, mobPath = pcall(function()
+        local main = pg:FindFirstChild("Main")
+        local quest = main and main:FindFirstChild("Quest")
+        local container = quest and quest:FindFirstChild("Container")
+        local title = container and container:FindFirstChild("QuestTitle")
+        local label = title and title:FindFirstChild("Title")
+        if label and label.Text and label.Text ~= "" then
+            return tostring(label.Text)
+        end
+        return nil
+    end)
+    if ok1 and mobPath then
+        local mob = parseQuestText(mobPath)
+        if mob then return mob, mobPath end
+    end
+
+    -- Pass 2: full PlayerGui:GetDescendants() scan, no visibility filter
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Text and obj.Text ~= "" then
+            local t = tostring(obj.Text)
+            if t:find("Defeat", 1, true) then
+                local mob = parseQuestText(t)
+                if mob then return mob, t end
             end
         end
     end
 
-    -- Pass 2: CoreGui might hold it (some executor setups)
+    -- Pass 3: CoreGui
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     if ok and coreGui then
-        for _, gui in ipairs(coreGui:GetChildren()) do
-            for _, obj in ipairs(gui:GetDescendants()) do
-                if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Text and obj.Text ~= "" then
-                    local t = tostring(obj.Text)
-                    if t:find("Defeat", 1, true) then
-                        local mob = parseQuestText(t)
-                        if mob then return mob, t end
-                    end
+        for _, obj in ipairs(coreGui:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and obj.Text and obj.Text ~= "" then
+                local t = tostring(obj.Text)
+                if t:find("Defeat", 1, true) then
+                    local mob = parseQuestText(t)
+                    if mob then return mob, t end
                 end
             end
         end
