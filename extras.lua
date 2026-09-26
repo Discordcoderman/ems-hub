@@ -1,8 +1,6 @@
 -- extras.lua — Redeem (first-run only), no-anim, auto-gacha, VOid attack
--- Gacha holds while _G.MeleeBuyPending is set — no gacha roll competes
--- with melee purchases for Beli. Rolls resume once the full melee chain
--- is complete. Rolled fruit tools are auto-stored to inventory by the
--- backpack listener in core.lua's MeleeCheck.
+-- Gacha now: broader result check, Beli gate, purchase cooldown,
+-- fallback RF search in case the primary path misses.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[extras] core.lua not loaded") end
 
@@ -17,6 +15,7 @@ if Spirit.Config then
     local E = Spirit.Config.Extras
     if E.AutoGachaFruit == nil then E.AutoGachaFruit = true end
     if E.GachaMinBeli   == nil then E.GachaMinBeli   = 100000 end
+    if E.GachaInterval  == nil then E.GachaInterval  = 5 end
 end
 
 -- ═══════════════════════════════════════════════════════════════
@@ -80,68 +79,122 @@ end)
 
 -- ═══════════════════════════════════════════════════════════════
 -- Auto Gacha + Auto Store
--- Rolled fruits arrive in the Backpack as Tools. core.lua's MeleeCheck
--- listener detects them and calls StoreFruit automatically. This loop
--- only handles the roll itself.
--- Blocked while _G.MeleeBuyPending is set so melee purchases aren't
--- outbid for Beli.
+-- Rolled fruits arrive in Backpack as Tools. core.lua's MeleeCheck
+-- listener auto-stores them; the sweep after roll is belt-and-braces.
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
     repeat task.wait(2) until LocalPlayer:FindFirstChild("Data")
 
+    -- Find the gacha RF. Primary path first, then fallback scan.
     local GachaRF
     local function getGacha()
         if GachaRF and GachaRF.Parent then return GachaRF end
+
+        -- Primary: ReplicatedStorage.Modules.Net.RF/GachaNetworkRF
         local ok, rf = pcall(function()
-            return ReplicatedStorage.Modules.Net:WaitForChild("RF/GachaNetworkRF", 10)
+            return ReplicatedStorage.Modules.Net:WaitForChild("RF/GachaNetworkRF", 5)
         end)
-        if ok and rf then GachaRF = rf end
-        return GachaRF
+        if ok and rf then
+            GachaRF = rf
+            print("[gacha] RF found via primary path")
+            return rf
+        end
+
+        -- Fallback: any RemoteFunction with "Gacha" in the name under Net
+        local net = ReplicatedStorage:FindFirstChild("Modules")
+                    and ReplicatedStorage.Modules:FindFirstChild("Net")
+        if net then
+            for _, obj in ipairs(net:GetDescendants()) do
+                if obj:IsA("RemoteFunction") and string.find(obj.Name, "Gacha") then
+                    GachaRF = obj
+                    print("[gacha] RF found via Net fallback: " .. obj.Name)
+                    return obj
+                end
+            end
+        end
+
+        -- Last resort: any RemoteFunction with Gacha anywhere
+        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+            if obj:IsA("RemoteFunction") and string.find(obj.Name, "Gacha") then
+                GachaRF = obj
+                print("[gacha] RF found via global scan: " .. obj:GetFullName())
+                return obj
+            end
+        end
+
+        return nil
     end
 
     local function gachaCall(ctx)
         local rf = getGacha()
-        if not rf then return false end
+        if not rf then return false, "no RF" end
         local ok, result = pcall(function()
-            return rf:InvokeServer({ SpokeNPC = "Blox Fruit Gacha", Context = ctx, BoxName = "ZiolesGacha" })
+            return rf:InvokeServer({
+                SpokeNPC = "Blox Fruit Gacha",
+                Context = ctx,
+                BoxName = "ZiolesGacha",
+            })
         end)
-        if not ok then return false end
+        if not ok then return false, tostring(result) end
         return true, result
     end
 
-    local nextAttempt = os.time()
-    while task.wait(5) do
+    -- First check to confirm RF is available at boot.
+    local bootOk, bootResult = gachaCall("Check")
+    if bootOk then
+        print("[gacha] boot check succeeded:", tostring(bootResult))
+    else
+        print("[gacha] boot check FAILED:", tostring(bootResult))
+    end
+
+    local nextAttempt = os.time() + 5
+    while task.wait(Spirit.Config.Extras.GachaInterval or 5) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoGachaFruit then return end
 
-            -- Hold while any melee is still waiting on prereqs.
+            -- Yield to melee purchases (Beli contention).
             if _G.MeleeBuyPending then return end
 
             if os.time() < nextAttempt then return end
 
             local ok, checkResult = gachaCall("Check")
-            if not ok then nextAttempt = os.time() + 60; return end
+            if not ok then
+                print("[gacha] Check failed:", tostring(checkResult))
+                nextAttempt = os.time() + 60
+                return
+            end
 
+            -- Broader result interpretation. The server returns one of
+            -- several fields depending on build.
             local canRoll = false
             if type(checkResult) == "table" then
-                canRoll = (checkResult.RequirementsMet == true) or (checkResult.CanPurchase == true)
+                canRoll = (checkResult.RequirementsMet == true)
+                       or (checkResult.CanPurchase == true)
+                       or (checkResult.CanRoll == true)
+                       or (checkResult.Available == true)
+            elseif type(checkResult) == "boolean" then
+                canRoll = checkResult
             end
-            if not canRoll then nextAttempt = os.time() + (30 * 60); return end
 
+            if not canRoll then
+                nextAttempt = os.time() + (30 * 60)
+                return
+            end
+
+            -- Beli gate.
             local minBeli = E.GachaMinBeli or 100000
-            if (Spirit.ScriptStorage.PlayerData.Beli or 0) < minBeli then
+            local beli = Spirit.ScriptStorage.PlayerData.Beli or 0
+            if beli < minBeli then
                 nextAttempt = os.time() + 30
                 return
             end
 
-            local pok = gachaCall("Purchase")
+            local pok, pres = gachaCall("Purchase")
+            print("[gacha] Purchase →", tostring(pok), tostring(pres))
             if pok then
                 nextAttempt = os.time() + (6 * 60 * 60)
-                -- Give the server a beat to drop the fruit tool in backpack,
-                -- then force a StoreFruit sweep in case the backpack listener
-                -- missed the ChildAdded.
                 task.wait(2)
                 pcall(function()
                     local bp = LocalPlayer:FindFirstChild("Backpack")
