@@ -12,7 +12,7 @@ local MODULES = {
     "tasks.lua","prison_escape.lua","level_farm.lua","player.lua","mele.lua",
     "bosses.lua","sword_bosses.lua","cake_prince.lua","raids.lua",
     "swords_quests.lua","race.lua","soul_guitar.lua","utility.lua",
-    "sea.lua","fix.lua","extras.lua","main.lua",
+    "sea.lua","extras.lua","main.lua",
 }
 
 local env = getgenv()
