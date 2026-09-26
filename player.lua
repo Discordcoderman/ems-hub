@@ -1,4 +1,4 @@
--- player.lua — LocalPlayerController + ability buyer
+-- player.lua — LocalPlayerController + ability buyer + auto-aura + auto-ken
 local Spirit = getgenv().Spirit
 if not Spirit then error("[player] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[player] tasks.lua not loaded") end
@@ -44,7 +44,9 @@ end)
 
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
--- Abilities buyer
+-- ═══════════════════════════════════════════════════════════════
+-- ABILITY BUYER — Geppo, Buso, Ken, Soru
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
     repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
@@ -98,7 +100,29 @@ task.spawn(function()
     end
 end)
 
--- Auto-Ken
+-- ═══════════════════════════════════════════════════════════════
+-- AUTO AURA — keep Buso Haki active
+-- Fires the Buso remote whenever the character isn't holding the
+-- HasBuso marker (it clears on death, aura toggle-off, server resync).
+-- ═══════════════════════════════════════════════════════════════
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            local char = Spirit.Character
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then return end
+            -- Already on
+            if char:FindFirstChild("HasBuso") then return end
+            -- Fire the Buso remote — server toggles aura on
+            Remotes.CommF_:InvokeServer("Buso")
+        end)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════════
+-- AUTO KEN — keep Observation Haki active
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
