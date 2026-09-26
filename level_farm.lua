@@ -390,9 +390,13 @@ local function ManualLevelLookup()
 end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
+-- ═══════════════════════════════════════════════════════════════
+-- LevelFarm — fire the StartQuest remote periodically and just kill
+-- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 local LastStartQuest = 0
+local CurrentQuest = nil
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
@@ -455,49 +459,38 @@ LF:RegisterMethod("Start", function(step)
 
     local Q = ManualLevelLookup()
     if not Q then
-        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel) .. " sea=" .. tostring(Spirit.SeaIndex))
+        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel))
         return
     end
 
-    local guiMob, guiText = Spirit.GetCurrentClaimQuest()
+    if CurrentQuest ~= Q.Qname then
+        CurrentQuest = Q.Qname
+        LastStartQuest = 0
+    end
 
-    if guiMob then
-        local matches = (guiMob == Q.NameMon)
-                     or (guiMob == Q.NameMon .. "s")
-                     or (guiText and string.find(guiText, Q.NameMon, 1, true) ~= nil)
-
-        if not matches then
-            Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(guiMob))
-            if os.time() - LastStartQuest > 4 then
-                LastStartQuest = os.time()
-                Spirit.J.AbandonQuest(Spirit.J)
-            end
+    -- Walk to the NPC if we're not close enough
+    if Q.PosQ then
+        local distToNPC = Spirit.CaculateDistance(Q.PosQ)
+        if distToNPC > 15 then
+            Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " giver (" .. math.floor(distToNPC) .. ")")
+            Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
             return
         end
-
-        Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
-        Spirit.CombatController.Attack(Q.Mon)
-        return
     end
 
-    if not Q.PosQ then return end
-    local distToNPC = Spirit.CaculateDistance(Q.PosQ)
-
-    if distToNPC > 15 then
-        Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " giver (" .. math.floor(distToNPC) .. ")")
-        Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-        return
-    end
-
+    -- Fire StartQuest remote once every 30s
     local now = os.time()
-    if now - LastStartQuest < 8 then
-        Spirit.SetTask("MainTask", "Level Farm | Waiting for " .. Q.Mon .. " quest to register")
-        return
+    if now - LastStartQuest > 30 then
+        LastStartQuest = now
+        pcall(function()
+            Remotes.CommF_:InvokeServer("StartQuest", Q.Qname, Q.Qdata)
+        end)
+        print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
     end
-    LastStartQuest = now
 
-    Spirit.SetTask("MainTask", "Level Farm | Accepting " .. Q.Mon .. " quest")
-    Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+    -- Kill mobs unconditionally
+    Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
+    Spirit.CombatController.Attack(Q.Mon)
 end)
 
 Spirit.__level_farm_ready = true
