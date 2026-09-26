@@ -1,9 +1,7 @@
 -- mele.lua — MeleesController
--- No level gates. Buy purely on mastery + currency + prereq items.
--- Mastery target is 400 across the board:
---   V1 base   → 400 (unlocks its V2 upgrade + passes Superhuman's 300)
---   Superhuman → 400 (for Godhuman)
---   V2 upgrade → 400 (for Godhuman)
+-- Every buy is gated on the previous melee's 400 mastery. Nothing buys
+-- until its prereq chain is trained. Gacha fruit rolling (extras.lua)
+-- is blocked by _G.MeleeBuyPending while any melee is still waiting.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[mele] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
@@ -14,6 +12,9 @@ local Remotes           = Spirit.Remotes
 local SetTask           = Spirit.SetTask
 local CheckItem         = Spirit.CheckItem
 
+-- ═══════════════════════════════════════════════════════════════
+-- TRAIN ORDER — every style trains to 400, one at a time.
+-- ═══════════════════════════════════════════════════════════════
 local TRAIN_SEQUENCE = {
     {name = "Black Leg",       target = 400},
     {name = "Electro",         target = 400},
@@ -26,23 +27,30 @@ local TRAIN_SEQUENCE = {
     {name = "Dragon Talon",    target = 400},
 }
 
+-- ═══════════════════════════════════════════════════════════════
+-- BUY CHAIN — every melee requires 400 mastery on its predecessor.
+-- No entry buys until the one before it is fully trained.
+-- ═══════════════════════════════════════════════════════════════
 local BUY_SEQUENCE = {
     { name = "Black Leg",       key = "BlackLeg",
       price = {Beli = 150000} },
 
     { name = "Electro",         key = "Electro",
-      price = {Beli = 500000} },
+      price = {Beli = 500000},
+      needMastery = {{"Black Leg", 400}} },
 
     { name = "Fishman Karate",  key = "FishmanKarate",
-      price = {Beli = 750000} },
+      price = {Beli = 750000},
+      needMastery = {{"Electro", 400}} },
 
     { name = "Dragon Claw",     key = "DragonClaw",
       price = {Fragments = 1500},
+      needMastery = {{"Fishman Karate", 400}},
       needRaids = 3 },
 
     { name = "Superhuman",      key = "Superhuman",
       price = {Beli = 3000000},
-      needMastery = {{"Black Leg", 300}, {"Electro", 300}, {"Fishman Karate", 300}} },
+      needMastery = {{"Black Leg", 400}, {"Electro", 400}, {"Fishman Karate", 400}} },
 
     { name = "Death Step",      key = "DeathStep",
       price = {Beli = 2500000, Fragments = 5000},
@@ -166,26 +174,33 @@ MC:RegisterMethod("Refresh", function()
     if not Spirit.Config.Melee or not Spirit.Config.Melee.AutoBuy then return nil end
 
     local next_buy = findNextUnowned()
+
+    -- Nothing left to buy — release gacha.
     if not next_buy then
-        _G.MeleeRaidRequest = false
+        _G.MeleeRaidRequest  = false
+        _G.MeleeBuyPending   = false
         return nil
     end
 
-    -- Raid gate — Dragon Claw runs 3 raids before purchase.
+    -- Prereqs not yet met — mark pending so gacha holds, do nothing.
+    if not (HasStaticReqs(next_buy) and HasPrice(next_buy)) then
+        _G.MeleeRaidRequest = false
+        _G.MeleeBuyPending  = true
+        return nil
+    end
+
+    -- Raid gate — Dragon Claw needs 3 raids first.
     if next_buy.needRaids and raidsDoneFor(next_buy) < next_buy.needRaids then
         _G.MeleeRaidRequest = true
+        _G.MeleeBuyPending  = true
         SetTask("MainTask", next_buy.name .. " prep | Raids "
             .. raidsDoneFor(next_buy) .. "/" .. next_buy.needRaids)
         return nil
     end
 
-    if HasStaticReqs(next_buy) and HasPrice(next_buy) then
-        _G.MeleeRaidRequest = false
-        return {kind = "buy", entry = next_buy}
-    end
-
     _G.MeleeRaidRequest = false
-    return nil
+    _G.MeleeBuyPending  = true
+    return {kind = "buy", entry = next_buy}
 end)
 
 MC:RegisterMethod("Start", function(action)
@@ -207,9 +222,19 @@ MC:RegisterMethod("Start", function(action)
     if entry.name == "Dragon Claw" then
         _G.MeleeRaidsDone = 0
     end
+
+    -- After the very last melee (Godhuman), release the gacha gate.
+    if entry.name == "Godhuman" then
+        _G.MeleeBuyPending = false
+    end
+
     print("[mele] purchased " .. entry.name)
 end)
 
+-- ═══════════════════════════════════════════════════════════════
+-- MASTERY LOOP — every 4 minutes, walk TRAIN_SEQUENCE and set
+-- _G.SelectWeapon to the first owned melee below 400.
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
@@ -228,6 +253,9 @@ task.spawn(function()
     end
 end)
 
+-- ═══════════════════════════════════════════════════════════════
+-- RAID COMPLETION WATCHER
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local inRaid, inRaidSince = false, 0
     while task.wait(2) do
