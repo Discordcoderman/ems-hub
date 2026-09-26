@@ -203,6 +203,10 @@ local function SweetChaliceInCombat()
 end
 
 function CombatController.Attack(names, forceNear, forceDist, callback)
+    -- Fruit collection owns the tick — bail before spawning any tweens.
+    if _G.FruitPriorityActive then return end
+    -- Sky teleport owns the tick — server is moving us, don't fight it.
+    if _G.SkyTransitionActive then return end
     if SweetChaliceInCombat() then
         pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
         return
@@ -211,7 +215,6 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
     pcall(sethiddenproperty, LocalPlayer, "SimulationRadius", math.huge)
     names = (type(names) == "string") and {names} or (names or {})
 
-    -- Keep the bring system pointed at whatever we're currently attacking.
     Spirit.BringNames = names
     if #names >= 1 then
         Spirit.Mon = names[1]
@@ -248,6 +251,10 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 
             while task.wait() do
                 if _G.Stop then return end
+                -- Fruit collection pre-empts the attack loop.
+                if _G.FruitPriorityActive then return end
+                -- Sky teleport pre-empts the attack loop.
+                if _G.SkyTransitionActive then return end
 
                 if SweetChaliceInCombat() then
                     pcall(function() if Spirit.TweenInstance then Spirit.TweenInstance:Cancel() end end)
@@ -350,14 +357,7 @@ function CombatController.Attack(names, forceNear, forceDist, callback)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- BRING ENEMY — attract quest mobs to a spot below the player
--- Attract, don't weld. Every tick, the mob's HRP is written to a
--- point below the player's feet. Network ownership is forced to the
--- client so the writes replicate, physics is zeroed so nothing
--- fights the pull, and the humanoid is parked in Physics state so it
--- doesn't try to pathfind its way out. No Anchored = true — that
--- would freeze the mob and stop the pull from updating when the
--- player moves.
+-- BRING ENEMY — attract mobs to a spot below the player
 -- ═══════════════════════════════════════════════════════════════
 getgenv().BringMonster = getgenv().BringMonster or false
 
@@ -379,30 +379,20 @@ end
 local function attractMob(v, hrp, hum, targetPos)
     if not v.Parent or not hrp.Parent then return end
     if hum.Health <= 0 then return end
-
     saveMobState(v, hrp, hum)
-
-    -- Give the client network ownership so CFrame writes replicate
-    -- back to the server and stick.
     pcall(function() setnetworkowner(v, LocalPlayer) end)
-
-    -- Kill every force that would fight the pull.
     pcall(function()
         hrp.Anchored   = false
         hrp.CanCollide = false
         hrp.Velocity   = Vector3.zero
         hrp.RotVelocity = Vector3.zero
     end)
-
-    -- Park the humanoid so it doesn't path back.
     pcall(function()
         hum.WalkSpeed  = 0
         hum.JumpPower  = 0
         hum.AutoRotate = false
         hum:ChangeState(Enum.HumanoidStateType.Physics)
     end)
-
-    -- Hard-write the CFrame. This is the pull.
     hrp.CFrame = CFrame.new(targetPos)
 end
 
@@ -433,15 +423,17 @@ end
 function Spirit.BringEnemy()
     if not getgenv().BringMonster then return end
     if not (Spirit.Config and Spirit.Config.BringMobs) then return end
+    -- Yield during fruit collection so mobs don't trail into the fruit.
+    if _G.FruitPriorityActive then return end
+    -- Yield during sky teleport so mobs don't trail across the map.
+    if _G.SkyTransitionActive then return end
 
     local char = LocalPlayer.Character
     if not char then return end
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    -- Target point = a few studs below the player's feet.
     local basePos = root.Position + Vector3.new(0, -6, 0)
-
     local enemyFolder = Workspace:FindFirstChild("Enemies")
     if not enemyFolder then return end
 
@@ -449,8 +441,6 @@ function Spirit.BringEnemy()
     local RANGE    = 350
     local pulled   = 0
 
-    -- Name filter — prefer Spirit.BringNames (set by CombatController.Attack),
-    -- fall back to Spirit.Mon (single target).
     local nameList = Spirit.BringNames
     if (not nameList or #nameList == 0) and Spirit.Mon and Spirit.Mon ~= "" then
         nameList = {Spirit.Mon}
@@ -458,17 +448,14 @@ function Spirit.BringEnemy()
 
     for _, v in ipairs(enemyFolder:GetChildren()) do
         if pulled >= MAX_PULL then break end
-
         if nameList and #nameList > 0 then
             if not table.find(nameList, v.Name) then continue end
         end
-
         local hrp = v:FindFirstChild("HumanoidRootPart")
         local hum = v:FindFirstChild("Humanoid")
         if not hrp or not hum or hum.Health <= 0 then continue end
         if (hrp.Position - root.Position).Magnitude > RANGE then continue end
 
-        -- Small radial jitter so they don't stack on a single point.
         local angle  = (pulled * 1.7) % (math.pi * 2)
         local radius = 2 + (pulled % 3)
         local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
@@ -477,11 +464,8 @@ function Spirit.BringEnemy()
         pulled = pulled + 1
     end
 
-    -- Prune locks for mobs that have been destroyed (died).
     for v in pairs(lockedMobs) do
-        if not v.Parent then
-            lockedMobs[v] = nil
-        end
+        if not v.Parent then lockedMobs[v] = nil end
     end
 end
 
