@@ -9,9 +9,10 @@ local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s?
 
 local MODULES = {
     "core.lua","data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
-    "tasks.lua","level_farm.lua","player.lua","mele.lua","bosses.lua",
-    "sword_bosses.lua","cake_prince.lua","raids.lua","swords_quests.lua",
-    "race.lua","soul_guitar.lua","utility.lua","sea.lua","extras.lua","main.lua",
+    "tasks.lua","prison_escape.lua","level_farm.lua","player.lua","mele.lua",
+    "bosses.lua","sword_bosses.lua","cake_prince.lua","raids.lua",
+    "swords_quests.lua","race.lua","soul_guitar.lua","utility.lua",
+    "sea.lua","fix.lua","extras.lua","main.lua",
 }
 
 local env = getgenv()
