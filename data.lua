@@ -1,4 +1,4 @@
--- data.lua — Config + GameData + melee tables
+-- data.lua — Config + tables
 local Spirit = getgenv().Spirit
 if not Spirit then error("[data] core.lua not loaded") end
 
@@ -42,8 +42,8 @@ Config = Config or {
         AutoRedeemCodes  = true,
         AutoGachaFruit   = false,
         GachaMinBeli     = 100000,
-        AutoCollectFruit = false,
-        CollectInterval  = 15,
+        AutoCollectFruit = true,          -- ← ENABLED
+        CollectInterval  = 10,
     },
 }
 Spirit.Config = Config
