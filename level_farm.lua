@@ -1,7 +1,4 @@
 -- level_farm.lua — LevelFarm task
--- Quest state machine: tracks the last time we SAW the quest GUI. If we
--- saw it within the last 15 seconds, we're still farming — never walk
--- back to the giver. Handles mob-respawn gaps and GUI flicker cleanly.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[level_farm] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[level_farm] tasks.lua not loaded") end
@@ -394,25 +391,25 @@ end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
 -- ═══════════════════════════════════════════════════════════════
--- LevelFarm
+-- LevelFarm — uses QuestController.JustCompletedAt for completion
+-- detection, and a composite tier key so quest-name-shared tiers
+-- (DesertQuest 1/2, SnowQuest 1/2, etc.) trigger correctly.
 -- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 
--- Quest tracking state
-local LastTargetQname = nil
-local LastQuestSeen = 0          -- os.time() when GUI or remote last confirmed our target
-local LastAcceptAttempt = 0      -- when we last fired StartQuest
+local LastTargetKey = nil
+local LastAcceptAttempt = 0
 local LastAbandon = 0
+local LastDebug = 0
 
--- Mob-match helper — handles plurals and substrings
 local function mobMatches(guiMob, targetMob)
     if not guiMob or not targetMob then return false end
     if guiMob == targetMob then return true end
     if guiMob == targetMob .. "s" then return true end
     if targetMob == guiMob .. "s" then return true end
-    if string.find(guiMob, targetMob, 1, true) then return true end
-    if string.find(targetMob, guiMob, 1, true) then return true end
+    if guiMob == targetMob .. "es" then return true end
+    if targetMob == guiMob .. "es" then return true end
     return false
 end
 
@@ -449,53 +446,57 @@ LF:RegisterMethod("Start", function(step)
 
     local now = os.time()
 
-    -- Tier change resets all tracking
-    if LastTargetQname ~= Q.Qname then
+    -- Composite tier key so "DesertQuest 1" vs "DesertQuest 2" fires
+    local targetKey = Q.Qname .. "|" .. tostring(Q.Qdata) .. "|" .. Q.NameMon
+
+    if LastTargetKey ~= targetKey then
         print(("[LF] tier change: %s → %s (lv=%d)"):format(
-            tostring(LastTargetQname), tostring(Q.Qname), currentLevel))
-        LastTargetQname = Q.Qname
-        LastQuestSeen = 0
+            tostring(LastTargetKey), targetKey, currentLevel))
+        LastTargetKey = targetKey
         LastAcceptAttempt = 0
         LastAbandon = 0
         pcall(function() Spirit.QuestController:Reset() end)
     end
 
-    -- Read both sources
+    -- ── Read state ──────────────────────────────────────────────
     local guiMob = Spirit.GetCurrentClaimQuest()
-    local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
+    local controller = Spirit.QuestController
+    local completedAt = controller and controller.JustCompletedAt or 0
+    local justCompleted = (completedAt > 0) and (now - completedAt < 3)
 
-    local guiMatches = guiMob and mobMatches(guiMob, Q.NameMon)
-    local remoteMatches = (remoteQuest == Q.Qname)
-
-    -- Mark the moment we saw our target quest
-    if guiMatches or remoteMatches then
-        LastQuestSeen = now
+    if now - LastDebug > 3 then
+        LastDebug = now
+        print(("[LF] lv=%d target=%s gui=%q justCompleted=%s"):format(
+            currentLevel, Q.Mon, tostring(guiMob), tostring(justCompleted)))
     end
 
-    -- Quest is "active" if we've seen it within the last 15 seconds.
-    -- This window covers mob-respawn gaps and GUI flicker.
-    local questActive = (now - LastQuestSeen < 15)
-
-    if questActive then
-        -- Attack. CombatController handles the "no mobs alive" case by
-        -- tweening to the spawn region and waiting for respawns.
+    -- Case 1: GUI shows our target mob → attack
+    if guiMob and mobMatches(guiMob, Q.NameMon) then
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
         Spirit.CombatController.Attack(Q.Mon)
         return
     end
 
-    -- Wrong quest shown in GUI (different mob than target) → abandon
-    if guiMob and not guiMatches then
+    -- Case 2: GUI shows a different mob → abandon
+    if guiMob then
         if now - LastAbandon > 5 then
             LastAbandon = now
-            print("[LF] abandoning GUI quest: " .. tostring(guiMob))
+            print(("[LF] abandoning '%s' (target: %s)"):format(
+                tostring(guiMob), Q.NameMon))
             Spirit.J.AbandonQuest(Spirit.J)
         end
         Spirit.SetTask("MainTask", "Level Farm | Abandoning: " .. tostring(guiMob))
         return
     end
 
-    -- No active quest. Walk to giver.
+    -- Case 3: GUI empty. If we just got a Complete signal, skip the
+    -- accept-grace window and go straight to the giver.
+    if not justCompleted and (now - LastAcceptAttempt < 5) then
+        Spirit.SetTask("MainTask", "Level Farm | Waiting for quest GUI...")
+        return
+    end
+
+    -- Case 4: Walk to giver
     if not Q.PosQ then return end
     local dist = Spirit.CaculateDistance(Q.PosQ)
 
@@ -505,15 +506,13 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- At giver. Fire StartQuest every 5s.
-    if now - LastAcceptAttempt > 5 then
-        LastAcceptAttempt = now
-        local ok, res = pcall(function()
-            return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-        end)
-        print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
-            tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
-    end
+    -- Case 5: At giver → fire StartQuest
+    LastAcceptAttempt = now
+    local ok, res = pcall(function()
+        return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+    end)
+    print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
+        tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
     Spirit.SetTask("MainTask", "Level Farm | Accepting " .. Q.Mon)
 end)
 
