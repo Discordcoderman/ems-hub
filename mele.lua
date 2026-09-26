@@ -1,27 +1,24 @@
--- mele.lua — MeleesController (full requirements)
--- Full 10-melee SEQUENCE. Auto-buys the next unowned melee the moment
--- every prereq is met. Buying overrides everything; when nothing is
--- buyable the dispatcher falls through to raids / fruit / level farm.
--- Dragon Claw runs three raids before purchase.
--- Prison escape is handled by prison_escape.lua, not here.
+-- mele.lua — MeleesController
+-- No level gates. Buy purely on mastery + currency + prereq items.
+-- Mastery target is 400 across the board:
+--   V1 base   → 400 (unlocks its V2 upgrade + passes Superhuman's 300)
+--   Superhuman → 400 (for Godhuman)
+--   V2 upgrade → 400 (for Godhuman)
 local Spirit = getgenv().Spirit
 if not Spirit then error("[mele] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
 
-local Services          = Spirit.Services
-local ReplicatedStorage = Services.ReplicatedStorage
+local ReplicatedStorage = Spirit.Services.ReplicatedStorage
 local ScriptStorage     = Spirit.ScriptStorage
 local Remotes           = Spirit.Remotes
 local SetTask           = Spirit.SetTask
 local CheckItem         = Spirit.CheckItem
 
-local MIN_PLAYER_LEVEL = 300
-
 local TRAIN_SEQUENCE = {
-    {name = "Black Leg",       target = 500},
-    {name = "Electro",         target = 500},
-    {name = "Fishman Karate",  target = 500},
-    {name = "Dragon Claw",     target = 500},
+    {name = "Black Leg",       target = 400},
+    {name = "Electro",         target = 400},
+    {name = "Fishman Karate",  target = 400},
+    {name = "Dragon Claw",     target = 400},
     {name = "Superhuman",      target = 400},
     {name = "Death Step",      target = 400},
     {name = "Sharkman Karate", target = 400},
@@ -30,30 +27,43 @@ local TRAIN_SEQUENCE = {
 }
 
 local BUY_SEQUENCE = {
-    { name = "Black Leg",       key = "BlackLeg",       playerLevel = 300,
+    { name = "Black Leg",       key = "BlackLeg",
       price = {Beli = 150000} },
-    { name = "Electro",         key = "Electro",        playerLevel = 300,
+
+    { name = "Electro",         key = "Electro",
       price = {Beli = 500000} },
-    { name = "Fishman Karate",  key = "FishmanKarate",  playerLevel = 300,
+
+    { name = "Fishman Karate",  key = "FishmanKarate",
       price = {Beli = 750000} },
-    { name = "Dragon Claw",     key = "DragonClaw",     playerLevel = 300,
-      price = {Fragments = 1500}, needRaids = 3 },
-    { name = "Superhuman",      key = "Superhuman",     playerLevel = 300,
+
+    { name = "Dragon Claw",     key = "DragonClaw",
+      price = {Fragments = 1500},
+      needRaids = 3 },
+
+    { name = "Superhuman",      key = "Superhuman",
       price = {Beli = 3000000},
       needMastery = {{"Black Leg", 300}, {"Electro", 300}, {"Fishman Karate", 300}} },
-    { name = "Death Step",      key = "DeathStep",      playerLevel = 400,
+
+    { name = "Death Step",      key = "DeathStep",
       price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Black Leg", 500}}, needKey = "Library Key" },
-    { name = "Sharkman Karate", key = "SharkmanKarate", playerLevel = 400,
+      needMastery = {{"Black Leg", 400}},
+      needKey = "Library Key" },
+
+    { name = "Sharkman Karate", key = "SharkmanKarate",
       price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Fishman Karate", 500}}, needKey = "Water Key" },
-    { name = "Electric Claw",   key = "ElectricClaw",   playerLevel = 400,
+      needMastery = {{"Fishman Karate", 400}},
+      needKey = "Water Key" },
+
+    { name = "Electric Claw",   key = "ElectricClaw",
       price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Electro", 500}} },
-    { name = "Dragon Talon",    key = "DragonTalon",    playerLevel = 400,
+      needMastery = {{"Electro", 400}} },
+
+    { name = "Dragon Talon",    key = "DragonTalon",
       price = {Beli = 2500000, Fragments = 5000},
-      needMastery = {{"Dragon Claw", 500}}, needFireEssence = true },
-    { name = "Godhuman",        key = "Godhuman",       playerLevel = 400,
+      needMastery = {{"Dragon Claw", 400}},
+      needFireEssence = true },
+
+    { name = "Godhuman",        key = "Godhuman",
       price = {Beli = 5000000, Fragments = 5000},
       needMastery = {{"Superhuman", 400}, {"Death Step", 400},
                      {"Sharkman Karate", 400}, {"Electric Claw", 400},
@@ -100,9 +110,6 @@ local function raidsDoneFor(entry)
 end
 
 local function HasStaticReqs(entry)
-    local lvl = ScriptStorage.PlayerData.Level or 0
-    if lvl < MIN_PLAYER_LEVEL then return false end
-    if entry.playerLevel and lvl < entry.playerLevel then return false end
     if entry.needMastery then
         for _, req in ipairs(entry.needMastery) do
             if not CheckItem(req[1]) then return false end
@@ -158,18 +165,13 @@ MC:RegisterMethod("Refresh", function()
     if not Spirit.Config.Items or not Spirit.Config.Items.AutoFullyMelees then return nil end
     if not Spirit.Config.Melee or not Spirit.Config.Melee.AutoBuy then return nil end
 
-    local lvl = ScriptStorage.PlayerData.Level or 0
-    if lvl < MIN_PLAYER_LEVEL then
-        _G.MeleeRaidRequest = false
-        return nil
-    end
-
     local next_buy = findNextUnowned()
     if not next_buy then
         _G.MeleeRaidRequest = false
         return nil
     end
 
+    -- Raid gate — Dragon Claw runs 3 raids before purchase.
     if next_buy.needRaids and raidsDoneFor(next_buy) < next_buy.needRaids then
         _G.MeleeRaidRequest = true
         SetTask("MainTask", next_buy.name .. " prep | Raids "
@@ -187,25 +189,25 @@ MC:RegisterMethod("Refresh", function()
 end)
 
 MC:RegisterMethod("Start", function(action)
-    if not action then return end
-    if action.kind == "buy" then
-        local entry = action.entry
-        if not GoToTeacher(entry.name) then
-            SetTask("MainTask", "Auto Melee | Moving to " .. entry.name .. " teacher")
-            return
-        end
-        SetTask("MainTask", "Auto Melee | Buying " .. entry.name)
-        Spirit.BuyMelee(entry.key, true)
-        task.wait(0.3)
-        Spirit.BuyMelee(entry.key)
-        task.wait(0.6)
-        Spirit.RefreshInventory()
-        if entry.name == "Dragon Claw" then
-            _G.MeleeRaidsDone = 0
-        end
-        print("[mele] purchased " .. entry.name)
+    if not action or action.kind ~= "buy" then return end
+    local entry = action.entry
+
+    if not GoToTeacher(entry.name) then
+        SetTask("MainTask", "Auto Melee | Moving to " .. entry.name .. " teacher")
         return
     end
+
+    SetTask("MainTask", "Auto Melee | Buying " .. entry.name)
+    Spirit.BuyMelee(entry.key, true)
+    task.wait(0.3)
+    Spirit.BuyMelee(entry.key)
+    task.wait(0.6)
+    Spirit.RefreshInventory()
+
+    if entry.name == "Dragon Claw" then
+        _G.MeleeRaidsDone = 0
+    end
+    print("[mele] purchased " .. entry.name)
 end)
 
 task.spawn(function()
