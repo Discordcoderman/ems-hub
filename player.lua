@@ -1,19 +1,70 @@
--- player.lua — LocalPlayerController + ability flow + auto-aura/auto-ken
--- Ability rules:
---   Level 70  → Buso Haki (aura) + Soru (flash step)
---   Level 700 → Ken (only when Beli >= KEN_COST)
+-- player.lua — LocalPlayerController + ability flow
+--   Level 70  → Buso (Armament), Soru (Flash Step), Geppo (Air Jump)
+--   Level 300 → Ken — handled by level_gates.lua, NOT here
+--
+-- Each purchase fires at most ONCE. Ownership is checked three ways:
+--   1. player tag (Buso / Ken persist as player tags once owned)
+--   2. character child (HasBuso / HasKen present while active)
+--   3. local session flag set on successful fire
+-- The first two catch "already owned from a previous session", the
+-- third guarantees we never spam within a single session.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[player] core.lua not loaded") end
-if not Spirit.FunctionsHandler then error("[player] tasks.lua not loaded") end
 
 local LocalPlayer   = Spirit.LocalPlayer
 local Remotes       = Spirit.Remotes
 local ScriptStorage = Spirit.ScriptStorage
 local SetTask       = Spirit.SetTask
 
-local KEN_COST = 2500000   -- adjust if game updates the price
-Spirit.kenBought = Spirit.kenBought or false
+local ABILITY_LEVEL = 70
 
+-- ═══════════════════════════════════════════════════════════════
+-- OWNERSHIP CHECKS
+-- ═══════════════════════════════════════════════════════════════
+local function playerHasTag(tag)
+    local ok, v = pcall(function() return LocalPlayer:HasTag(tag) end)
+    return ok and v == true
+end
+
+local function charHasChild(name)
+    local char = LocalPlayer.Character
+    if not char then return false end
+    return char:FindFirstChild(name) ~= nil
+end
+
+local function ownsBuso()
+    if Spirit._busoBought then return true end
+    if playerHasTag("Buso") then Spirit._busoBought = true; return true end
+    if charHasChild("HasBuso") then Spirit._busoBought = true; return true end
+    return false
+end
+
+local function ownsSoru()
+    if Spirit._soruBought then return true end
+    if playerHasTag("Soru") or playerHasTag("FlashStep") then
+        Spirit._soruBought = true; return true
+    end
+    return false
+end
+
+local function ownsGeppo()
+    if Spirit._geppoBought then return true end
+    if playerHasTag("Geppo") or playerHasTag("Skywalk") then
+        Spirit._geppoBought = true; return true
+    end
+    return false
+end
+
+local function ownsKen()
+    -- Ken is not managed here but the flag is read by the auto-Ken task.
+    if Spirit.kenBought then return true end
+    if playerHasTag("Ken") then Spirit.kenBought = true; return true end
+    return false
+end
+
+-- ═══════════════════════════════════════════════════════════════
+-- LocalPlayerController
+-- ═══════════════════════════════════════════════════════════════
 local LPC = Spirit.FunctionsHandler.LocalPlayerController
 
 LPC:RegisterMethod("EquipTool", function(toolName)
@@ -49,68 +100,50 @@ end)
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
 -- ═══════════════════════════════════════════════════════════════
--- ABILITY FLOW — strict level gates
+-- ABILITY PURCHASE — fires once per ability, then never again
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
     repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
     task.wait(3)
 
-    local bought = {Buso = false, Soru = false}
-
-    local function hasTag(name)
-        local ok, v = pcall(function() return LocalPlayer:HasTag(name) end)
-        return ok and v == true
-    end
-
-    while task.wait(10) do
+    while task.wait(5) do
         pcall(function()
-            local lv   = ScriptStorage.PlayerData.Level or 0
-            local beli = ScriptStorage.PlayerData.Beli or 0
+            local lv = ScriptStorage.PlayerData.Level or 0
+            if lv < ABILITY_LEVEL then return end
+            if not LocalPlayer.Character then return end
 
-            -- Level 70 → Buso (aura)
-            if lv >= 70 and not bought.Buso and not hasTag("Buso") then
-                local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Buso") end)
-                if ok then
-                    bought.Buso = true
-                    print("[player] Buso purchased at level " .. lv)
-                end
-                task.wait(0.5)
+            -- Buso — Armament Haki.
+            if not ownsBuso() then
+                print("[player] buying Buso at level " .. lv)
+                Remotes.CommF_:InvokeServer("BuyHaki", "Buso")
+                Spirit._busoBought = true
             end
 
-            -- Level 70 → Soru (flash step)
-            if lv >= 70 and not bought.Soru then
-                local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
-                if ok then
-                    bought.Soru = true
-                    print("[player] Soru purchased at level " .. lv)
-                end
-                task.wait(0.5)
+            -- Soru — Flash Step.
+            if not ownsSoru() then
+                print("[player] buying Soru at level " .. lv)
+                Remotes.CommF_:InvokeServer("BuyHaki", "Soru")
+                Spirit._soruBought = true
             end
 
-            -- Level 700 → Ken (only if Beli >= KEN_COST)
-            if lv >= 700 and not Spirit.kenBought and not hasTag("Ken") then
-                if beli >= KEN_COST then
-                    local ok = pcall(function() return Remotes.CommF_:InvokeServer("KenTalk", "Buy") end)
-                    if ok then
-                        Spirit.kenBought = true
-                        print(("[player] Ken purchased at level %d with %.2fM Beli"):format(lv, beli / 1e6))
-                    end
-                else
-                    local need = (KEN_COST - beli) / 1e6
-                    SetTask("SubTask", ("Saving for Ken — %.2fM / 2.5M"):format(beli / 1e6))
-                end
+            -- Geppo — Air Jump / Sky Walk.
+            if not ownsGeppo() then
+                print("[player] buying Geppo at level " .. lv)
+                Remotes.CommF_:InvokeServer("BuyHaki", "Geppo")
+                Spirit._geppoBought = true
             end
         end)
     end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO AURA — keep Buso active
+-- AUTO AURA — keep Buso active, only if owned
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
+            if not ownsBuso() then return end
             local char = Spirit.Character
             if not char then return end
             local hum = char:FindFirstChildOfClass("Humanoid")
@@ -121,12 +154,14 @@ task.spawn(function()
     end
 end)
 
--- AUTO KEN — only after Ken is purchased
+-- ═══════════════════════════════════════════════════════════════
+-- AUTO KEN — only after Ken is purchased (owned by level_gates.lua)
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
             if not (Spirit.Config and Spirit.Config.AutoKen) then return end
-            if not Spirit.kenBought then return end
+            if not ownsKen() then return end
             local char = Spirit.Character
             if not char then return end
             if char:FindFirstChild("HasKen") then return end
@@ -136,4 +171,4 @@ task.spawn(function()
     end
 end)
 
-print("[Spirit] player.lua loaded")
+print("[Spirit] player.lua loaded — Buso/Soru/Geppo @ 70, Ken via level_gates")
