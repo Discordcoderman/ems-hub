@@ -391,9 +391,7 @@ end
 Spirit.ManualLevelLookup = ManualLevelLookup
 
 -- ═══════════════════════════════════════════════════════════════
--- LevelFarm — uses QuestController.JustCompletedAt for completion
--- detection, and a composite tier key so quest-name-shared tiers
--- (DesertQuest 1/2, SnowQuest 1/2, etc.) trigger correctly.
+-- LevelFarm
 -- ═══════════════════════════════════════════════════════════════
 local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
@@ -402,6 +400,7 @@ local LastTargetKey = nil
 local LastAcceptAttempt = 0
 local LastAbandon = 0
 local LastDebug = 0
+local AtGiverSince = 0
 
 local function mobMatches(guiMob, targetMob)
     if not guiMob or not targetMob then return false end
@@ -413,6 +412,21 @@ local function mobMatches(guiMob, targetMob)
     return false
 end
 
+local function rawScan()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local main = pg and pg:FindFirstChild("Main")
+    if not main then return "no Main" end
+    for _, obj in ipairs(main:GetDescendants()) do
+        if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
+            local t = tostring(obj.Text)
+            if t:find("Defeat", 1, true) then
+                return t
+            end
+        end
+    end
+    return "no Defeat label"
+end
+
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
     return 4
@@ -422,7 +436,6 @@ LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
-    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -445,8 +458,6 @@ LF:RegisterMethod("Start", function(step)
     end
 
     local now = os.time()
-
-    -- Composite tier key so "DesertQuest 1" vs "DesertQuest 2" fires
     local targetKey = Q.Qname .. "|" .. tostring(Q.Qdata) .. "|" .. Q.NameMon
 
     if LastTargetKey ~= targetKey then
@@ -455,10 +466,10 @@ LF:RegisterMethod("Start", function(step)
         LastTargetKey = targetKey
         LastAcceptAttempt = 0
         LastAbandon = 0
+        AtGiverSince = 0
         pcall(function() Spirit.QuestController:Reset() end)
     end
 
-    -- ── Read state ──────────────────────────────────────────────
     local guiMob = Spirit.GetCurrentClaimQuest()
     local controller = Spirit.QuestController
     local completedAt = controller and controller.JustCompletedAt or 0
@@ -466,18 +477,19 @@ LF:RegisterMethod("Start", function(step)
 
     if now - LastDebug > 3 then
         LastDebug = now
-        print(("[LF] lv=%d target=%s gui=%q justCompleted=%s"):format(
-            currentLevel, Q.Mon, tostring(guiMob), tostring(justCompleted)))
+        print(("[LF] lv=%d target=%s gui=%q raw=%q lastAccept=%ds ago"):format(
+            currentLevel, Q.Mon, tostring(guiMob), rawScan(),
+            now - LastAcceptAttempt))
     end
 
-    -- Case 1: GUI shows our target mob → attack
+    -- Case 1: GUI matches → attack
     if guiMob and mobMatches(guiMob, Q.NameMon) then
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
         Spirit.CombatController.Attack(Q.Mon)
         return
     end
 
-    -- Case 2: GUI shows a different mob → abandon
+    -- Case 2: GUI shows wrong quest → abandon
     if guiMob then
         if now - LastAbandon > 5 then
             LastAbandon = now
@@ -489,8 +501,7 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- Case 3: GUI empty. If we just got a Complete signal, skip the
-    -- accept-grace window and go straight to the giver.
+    -- Case 3: GUI empty. Grace-window bypass on completion
     if not justCompleted and (now - LastAcceptAttempt < 5) then
         Spirit.SetTask("MainTask", "Level Farm | Waiting for quest GUI...")
         return
@@ -503,16 +514,31 @@ LF:RegisterMethod("Start", function(step)
     if dist > 15 then
         Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " (" .. math.floor(dist) .. ")")
         Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
+        AtGiverSince = 0
         return
     end
 
-    -- Case 5: At giver → fire StartQuest
-    LastAcceptAttempt = now
-    local ok, res = pcall(function()
-        return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-    end)
-    print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
-        tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
+    -- Track time at giver
+    if AtGiverSince == 0 then AtGiverSince = now end
+
+    -- Case 5: Fire StartQuest every 5s
+    if now - LastAcceptAttempt > 5 then
+        LastAcceptAttempt = now
+        local ok, res = pcall(function()
+            return Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+        end)
+        print(("[LF] StartQuest %s/%s → ok=%s res=%s"):format(
+            tostring(Q.Qname), tostring(Q.Qdata), tostring(ok), tostring(res)))
+    end
+
+    -- Bypass: stuck at giver 8s with no GUI → attack anyway
+    if now - AtGiverSince > 8 then
+        print("[LF] stuck at giver 8s — attacking target anyway")
+        Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " (bypass)")
+        Spirit.CombatController.Attack(Q.Mon)
+        return
+    end
+
     Spirit.SetTask("MainTask", "Level Farm | Accepting " .. Q.Mon)
 end)
 
