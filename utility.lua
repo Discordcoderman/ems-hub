@@ -11,7 +11,6 @@ local Remotes           = Spirit.Remotes
 local SetTask           = Spirit.SetTask
 local CheckItem         = Spirit.CheckItem
 
--- Global gate — other tasks check this before taking the dispatcher.
 _G.FruitPriorityActive = false
 
 -- ═══════════════════════════════════════════════════════════════
@@ -80,11 +79,7 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS
--- Commits to one fruit. While committed, the dispatcher routes ALL
--- ticks straight to this task (tasks.lua's runFruitPriority), so
--- nothing can cancel the tween mid-flight. Releases only when the
--- fruit is collected or definitively unreachable.
+-- COLLECT DROPS — name-gated
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
@@ -98,21 +93,23 @@ local lastCacheRefresh = 0
 local lastScan = 0
 local cachedFruit = nil
 
-local function getFruitName(fruit)
-    if not fruit then return "?" end
+local function resolveFruitName(fruit)
+    if not fruit then return nil end
     local attr = fruit:GetAttribute("OriginalName")
     if attr and attr ~= "" then return tostring(attr) end
     local child = fruit:FindFirstChild("OriginalName")
     if child and (child:IsA("StringValue") or child:IsA("ValueBase")) then
-        return tostring(child.Value)
+        local v = tostring(child.Value)
+        if v ~= "" then return v end
     end
-    return tostring(fruit.Name)
+    return nil
 end
 
 local function isFruitModel(obj)
     if not obj or not obj.Parent then return false end
     if not obj:IsA("Model") then return false end
-    return obj:FindFirstChild("FruitAnimator") ~= nil
+    if not obj:FindFirstChild("FruitAnimator") then return false end
+    return resolveFruitName(obj) ~= nil
 end
 
 local function findHandle(fruit)
@@ -190,7 +187,7 @@ CD:RegisterMethod("Refresh", function()
         if priorityTarget.Parent then
             return priorityTarget
         end
-        print("[fruit] target disappeared — collected, resuming farming")
+        print("[fruit] target disappeared — collected")
         releasePriority()
         return nil
     end
@@ -205,8 +202,8 @@ CD:RegisterMethod("Refresh", function()
 
     for _, obj in ipairs(workspace:GetDescendants()) do
         if isFruitModel(obj) then
-            local name = getFruitName(obj)
-            if not blacklist[name] and not ownedFruitCache[name] then
+            local name = resolveFruitName(obj)
+            if name and not blacklist[name] and not ownedFruitCache[name] then
                 cachedFruit = obj
                 return cachedFruit
             end
@@ -218,7 +215,11 @@ end)
 CD:RegisterMethod("Start", function(fruit)
     if not fruit or not fruit.Parent then return end
 
-    local name = getFruitName(fruit)
+    local name = resolveFruitName(fruit)
+    if not name then
+        releasePriority()
+        return
+    end
 
     if priorityTarget ~= fruit then
         priorityTarget = fruit
@@ -235,14 +236,13 @@ CD:RegisterMethod("Start", function(fruit)
 
     local handle = findHandle(fruit)
     if not handle or not handle.Position then
-        print("[fruit] no Handle on " .. name .. " — skipping")
+        print("[fruit] no Handle on " .. name)
         blacklist[name] = true
         releasePriority()
         return
     end
 
     SetTask("MainTask", "Fruit: " .. name .. " (" .. math.floor((hrp.Position - handle.Position).Magnitude) .. " studs)")
-
     Spirit.TweenController.Create(CFrame.new(handle.Position))
 
     local arriveDeadline = tick() + 15
@@ -263,9 +263,7 @@ CD:RegisterMethod("Start", function(fruit)
         print("[fruit] collected " .. name)
         local tool = toolInBackpack(name)
         if tool then
-            pcall(function()
-                Remotes.CommF_:InvokeServer("StoreFruit", name, tool)
-            end)
+            pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
             task.wait(0.5)
         end
         releasePriority()
@@ -273,7 +271,7 @@ CD:RegisterMethod("Start", function(fruit)
     end
 
     if not arrived then
-        print("[fruit] couldn't reach " .. name .. " — skipping")
+        print("[fruit] couldn't reach " .. name)
         blacklist[name] = true
         releasePriority()
         return
@@ -282,7 +280,6 @@ CD:RegisterMethod("Start", function(fruit)
     local touchDeadline = tick() + 3
     while tick() < touchDeadline do
         if not fruit.Parent then break end
-
         pcall(function()
             if firetouchinterest and handle.Parent then
                 local c = LocalPlayer.Character
@@ -301,9 +298,7 @@ CD:RegisterMethod("Start", function(fruit)
         print("[fruit] collected " .. name)
         local tool = toolInBackpack(name)
         if tool then
-            pcall(function()
-                Remotes.CommF_:InvokeServer("StoreFruit", name, tool)
-            end)
+            pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
             task.wait(0.5)
         end
         releasePriority()
@@ -312,18 +307,14 @@ CD:RegisterMethod("Start", function(fruit)
 
     local tool = toolInBackpack(name)
     if tool then
-        print("[fruit] picked up into backpack — storing " .. name)
-        pcall(function()
-            Remotes.CommF_:InvokeServer("StoreFruit", name, tool)
-        end)
+        print("[fruit] picked up — storing " .. name)
+        pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
         task.wait(0.6)
         releasePriority()
         return
     end
 
-    pcall(function()
-        Remotes.CommF_:InvokeServer("StoreFruit", name, fruit)
-    end)
+    pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, fruit) end)
     task.wait(0.8)
 
     if not fruit.Parent or ownsFruit(name) then
@@ -332,7 +323,7 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
-    print("[fruit] " .. name .. " rejected (storage full or duplicate) — skipping")
+    print("[fruit] " .. name .. " rejected — skipping")
     blacklist[name] = true
     releasePriority()
 end)
