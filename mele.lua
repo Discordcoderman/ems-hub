@@ -1,8 +1,7 @@
 -- mele.lua — MeleesController
--- Buys melees in order. Only "wins" the dispatcher when the next melee
--- is actually buyable right now (level + mastery + keys + currency all
--- satisfied). Otherwise returns nil so LevelFarm can run and mastery
--- climbs passively.
+-- Never wins the dispatcher below level 300. Melees are only purchasable
+-- once the player reaches those thresholds, so before then this task
+-- stays out of the way and lets LevelFarm run.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[mele] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[mele] tasks.lua not loaded") end
@@ -11,6 +10,11 @@ local ScriptStorage = Spirit.ScriptStorage
 local Remotes       = Spirit.Remotes
 local SetTask       = Spirit.SetTask
 local CheckItem     = Spirit.CheckItem
+
+-- Absolute floor: no melee is buyable below this. Guards against any
+-- other bug in the readiness checks. Server enforces level 300 for the
+-- first three melees anyway, so this never blocks a legit purchase.
+local MIN_PLAYER_LEVEL = 300
 
 local SEQUENCE = {
     {name = "Black Leg",       key = "BlackLeg",       price = {Beli = 150000},                    playerLevel = 300},
@@ -40,40 +44,22 @@ local function FindNextUnowned()
     return nil
 end
 
--- Is the given melee ready to be purchased RIGHT NOW?
-local function IsBuyableNow(melee)
+local function HasAllPrereqs(melee)
     local playerLevel = ScriptStorage.PlayerData.Level or 0
 
-    -- Level gate
-    if melee.playerLevel and playerLevel < melee.playerLevel then
-        return false, "level"
-    end
+    if playerLevel < MIN_PLAYER_LEVEL then return false end
+    if melee.playerLevel and playerLevel < melee.playerLevel then return false end
 
-    -- Mastery gates
     if melee.needMastery then
         for _, req in ipairs(melee.needMastery) do
-            local name, needed = req[1], req[2]
-            if not CheckItem(name) then
-                return false, "mastery_missing:" .. name
-            end
-            local mst = ScriptStorage.Melees[name] or 0
-            if mst < needed then
-                return false, "mastery_low:" .. name
-            end
+            if not CheckItem(req[1]) then return false end
+            if (ScriptStorage.Melees[req[1]] or 0) < req[2] then return false end
         end
     end
 
-    -- Keys
-    if melee.needKey and not CheckItem(melee.needKey) then
-        return false, "key:" .. melee.needKey
-    end
+    if melee.needKey and not CheckItem(melee.needKey) then return false end
+    if melee.needFireEssence and not CheckItem("Fire Essence") then return false end
 
-    -- Fire Essence materials
-    if melee.needFireEssence and not CheckItem("Fire Essence") then
-        return false, "fire_essence"
-    end
-
-    -- Godhuman materials
     if melee.needMaterials then
         local mats = {
             {"Dragon Scale", 10}, {"Fish Tail", 20},
@@ -81,19 +67,14 @@ local function IsBuyableNow(melee)
         }
         for _, mat in ipairs(mats) do
             local count = (ScriptStorage.Backpack[mat[1]] and ScriptStorage.Backpack[mat[1]].Count) or 0
-            if count < mat[2] then
-                return false, "mat:" .. mat[1]
-            end
+            if count < mat[2] then return false end
         end
     end
 
-    -- Currency
     for cur, amount in pairs(melee.price) do
         local have = (cur == "Beli" and (ScriptStorage.PlayerData.Beli or 0))
                   or (cur == "Fragments" and (ScriptStorage.PlayerData.Fragments or 0)) or 0
-        if have < amount then
-            return false, "beli"
-        end
+        if have < amount then return false end
     end
 
     return true
@@ -121,39 +102,36 @@ end
 
 local MC = Spirit.FunctionsHandler.MeleesController
 
--- Refresh returns TRUE only when the next unowned melee can be bought
--- immediately. Otherwise returns nil so the dispatcher falls through to
--- LevelFarm (which handles the actual farming so mastery goes up).
+-- Refresh returns the melee table ONLY when the melee can be purchased
+-- right now. Otherwise returns nil so the dispatcher falls through.
 MC:RegisterMethod("Refresh", function()
-    if not (Spirit.Config and Spirit.Config.Items and Spirit.Config.Items.AutoFullyMelees) then
-        return nil
-    end
-    if not (Spirit.Config and Spirit.Config.Melee and Spirit.Config.Melee.AutoBuy) then
-        return nil
-    end
+    -- Absolute floors, checked first so nothing else can accidentally
+    -- pass and hog dispatch.
+    if not Spirit.Config then return nil end
+    if not Spirit.Config.Items then return nil end
+    if not Spirit.Config.Items.AutoFullyMelees then return nil end
+    if not Spirit.Config.Melee then return nil end
+    if not Spirit.Config.Melee.AutoBuy then return nil end
+
+    local playerLevel = ScriptStorage.PlayerData.Level or 0
+    if playerLevel < MIN_PLAYER_LEVEL then return nil end
 
     local next_melee = FindNextUnowned()
-    if not next_melee then
-        return nil   -- all owned, don't hog the dispatcher
-    end
+    if not next_melee then return nil end
 
-    local buyable = IsBuyableNow(next_melee)
-    if not buyable then
-        -- Not ready to buy yet — farming will handle progress.
-        return nil
-    end
+    if not HasAllPrereqs(next_melee) then return nil end
 
     return next_melee
 end)
 
 MC:RegisterMethod("Start", function(melee)
-    if not melee then return end
+    if type(melee) ~= "table" or not melee.name then return end
 
-    -- Walk to the teacher and buy
     if not GoToTeacher(melee.name) then
-        SetTask("MainTask", "Auto Melee | Moving to buy " .. melee.name)
+        SetTask("MainTask", "Auto Melee | Moving to " .. melee.name .. " teacher")
         return
     end
+
     SetTask("MainTask", "Auto Melee | Buying " .. melee.name)
     local key = (Spirit.MeleePrices[melee.name] and Spirit.MeleePrices[melee.name].Id) or melee.key
     Spirit.BuyMelee(key, true)
@@ -162,17 +140,14 @@ MC:RegisterMethod("Start", function(melee)
     task.wait(0.5)
 end)
 
--- Background task: keep the correct "training melee" equipped so its
--- mastery goes up during normal LevelFarm attacks. Picks the first
--- owned melee whose mastery is needed as a prerequisite for a later
--- melee in the sequence.
+-- Background: keep the correct training melee equipped so mastery goes
+-- up while LevelFarm fights mobs.
 task.spawn(function()
     while task.wait(5) do
         pcall(function()
             for _, m in ipairs(SEQUENCE) do
                 if CheckItem(m.name) then
                     local mst = ScriptStorage.Melees[m.name] or 0
-                    -- Find if any later melee needs this one's mastery
                     for _, other in ipairs(SEQUENCE) do
                         if other.needMastery then
                             for _, req in ipairs(other.needMastery) do
