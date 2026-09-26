@@ -400,18 +400,13 @@ local LastAbandon = 0
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
-    local lv = ScriptStorage.PlayerData.Level or 0
-    if lv < 10 then return 1
-    elseif lv < 70 then return 2
-    elseif lv < 120 then return 3
-    else return 4 end
+    return 4
 end)
 
 LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
-    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -427,30 +422,12 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
-    -- Shanda / God's Guard shortcut path
-    if step == 2 or step == 3 then
-        local mobName = (step == 2) and "Shanda" or "God's Guard"
-        local skyCF = (step == 2) and CFrame.new(-7894, 5547, -380) or CFrame.new(-4650, 872, -1775)
-        if Spirit.SeaIndex == 1 then
-            local loc = LocalPlayer:GetAttribute("CurrentLocation")
-            if not loc or (loc ~= "Skylands" and loc ~= "Upper Skylands") then
-                Spirit.TweenController.Create(skyCF)
-                task.wait(1)
-                return
-            end
-        end
-        Spirit.SetTask("MainTask", "Level Farm | " .. mobName .. " | Skylands")
-        Spirit.CombatController.Attack(mobName)
-        return
-    end
-
     local Q = ManualLevelLookup()
     if not Q then
         Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel))
         return
     end
 
-    -- ─── Case 1: QuestController confirms correct quest → attack ──
     local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
     if remoteQuest == Q.Qname then
         Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
@@ -458,7 +435,6 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- ─── Case 2: QuestController says wrong quest is active → abandon ─
     if remoteQuest ~= "" then
         local now = os.time()
         if now - LastAbandon > 3 then
@@ -470,7 +446,6 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- ─── Case 3: remote silent. Try GUI fallback ──────────────────
     local guiMob = Spirit.GetCurrentClaimQuest()
     if guiMob then
         local matches = (guiMob == Q.NameMon) or (guiMob == Q.NameMon .. "s")
@@ -490,7 +465,6 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
-    -- ─── Case 4: no quest active. Walk to NPC and accept ─────────
     if not Q.PosQ then return end
     local dist = Spirit.CaculateDistance(Q.PosQ)
 
@@ -500,7 +474,6 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- At the NPC. Fire StartQuest on a 5s cooldown, log the response.
     local now = os.time()
     if now - LastStartQuest > 5 then
         LastStartQuest = now
