@@ -100,30 +100,24 @@ function J.StartQuest(_self, questId, questIndex)
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- GetCurrentClaimQuest — scan every TextLabel under PlayerGui.Main
--- for a "Defeat N MobName" pattern. Works regardless of which
--- container the quest UI happens to live in.
+-- GetCurrentClaimQuest — scan PlayerGui.Main for "Defeat N Mob"
 -- ═══════════════════════════════════════════════════════════════
 local function parseQuestText(text)
-    -- Try "(Lv. X)" or "[Lv. X]" suffix
     local mob = text:match("Defeat%s+%d+%s+(.-)%s*[%(%[]")
-    -- Then plain end-of-string
     if not mob then
         mob = text:match("Defeat%s+%d+%s+(.+)$")
     end
     if not mob or mob == "" then return nil end
     mob = mob:gsub("%s+$", "")
-    mob = mob:gsub("Military ", "Mil. ")
     return mob
 end
 
 function J.GetCurrentClaimQuest(_self)
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return nil, nil end
+    if not pg then return nil end
     local main = pg:FindFirstChild("Main")
-    if not main then return nil, nil end
+    if not main then return nil end
 
-    -- 1. Fast path: known standard container
     local standardFrame = main:FindFirstChild("Quest")
     if standardFrame and standardFrame.Visible then
         local container = standardFrame:FindFirstChild("Container")
@@ -132,22 +126,20 @@ function J.GetCurrentClaimQuest(_self)
                       and container.QuestTitle:FindFirstChild("Title")
         if titleBox and titleBox.Text and titleBox.Text ~= "" then
             local mob = parseQuestText(tostring(titleBox.Text))
-            if mob then return mob, tostring(titleBox.Text) end
+            if mob then return mob end
         end
     end
 
-    -- 2. Recursive scan: any visible TextLabel containing "Defeat"
     for _, obj in ipairs(main:GetDescendants()) do
         if obj:IsA("TextLabel") and obj.Visible and obj.Text and obj.Text ~= "" then
             local text = tostring(obj.Text)
             if text:find("Defeat", 1, true) then
                 local mob = parseQuestText(text)
-                if mob then return mob, text end
+                if mob then return mob end
             end
         end
     end
 
-    -- 3. Also scan a few common alternate roots
     for _, altName in ipairs({"QuestHolder", "QuestTracker", "Quests", "QuestProgress"}) do
         local alt = main:FindFirstChild(altName)
         if alt then
@@ -156,30 +148,42 @@ function J.GetCurrentClaimQuest(_self)
                     local text = tostring(obj.Text)
                     if text:find("Defeat", 1, true) then
                         local mob = parseQuestText(text)
-                        if mob then return mob, text end
+                        if mob then return mob end
                     end
                 end
             end
         end
     end
 
-    return nil, nil
+    return nil
 end
 
 Spirit.GetCurrentClaimQuest = function()
     return J.GetCurrentClaimQuest(J)
 end
 
+-- ═══════════════════════════════════════════════════════════════
+-- QuestController — hooks QuestUpdate remote, tracks active quest
+-- AND completion via Context = "Complete" payloads.
+-- ═══════════════════════════════════════════════════════════════
 local QuestController = {
     CurrentQuest = "",
     CurrentQuestName = "",
+
+    -- Set the moment the server fires Context = "Complete"
+    JustCompletedAt = 0,
+    JustCompletedName = "",
+    JustCompletedQuest = "",
+
     QuestConnection = nil,
 }
 Spirit.QuestController = QuestController
 
 function QuestController:Set(data)
     self.CurrentQuest = (function()
-        for progressKey in pairs(data.Progress or {}) do return progressKey end
+        for progressKey in pairs(data.Progress or {}) do
+            return progressKey
+        end
         return ""
     end)()
     self.CurrentQuestName = data.InternalQuestName or ""
@@ -190,15 +194,52 @@ function QuestController:Reset()
     self.CurrentQuestName = ""
 end
 
+-- Handle a remote payload. Accepts either a single table or (a, b) pair.
+-- Returns true if handled.
+local function handleQuestPayload(...)
+    local args = {...}
+    local tbl = nil
+
+    -- Unwrap: payload may be table directly, or (nil, table), or (table, extra)
+    for _, arg in ipairs(args) do
+        if type(arg) == "table" then
+            -- Prefer the one with quest fields
+            if arg.InternalQuestName or arg.Context or arg.Name then
+                tbl = arg
+                break
+            end
+            if not tbl then tbl = arg end
+        end
+    end
+
+    if not tbl then
+        QuestController:Reset()
+        return false
+    end
+
+    -- Completion event — server says the quest is done
+    if tbl.Context == "Complete" then
+        QuestController.JustCompletedAt   = os.time()
+        QuestController.JustCompletedName = tbl.Name or ""
+        QuestController.JustCompletedQuest = tbl.InternalQuestName or ""
+        print(("[quests] completed: %s (%s)"):format(
+            tostring(tbl.Name), tostring(tbl.InternalQuestName)))
+        QuestController:Reset()
+        return true
+    end
+
+    -- Active quest event
+    if tbl.InternalQuestName then
+        QuestController:Set(tbl)
+        return true
+    end
+
+    return false
+end
+
 local questConnectOk = pcall(function()
     QuestController.QuestConnection =
-        ReplicatedStorage.Remotes.QuestUpdate.OnClientEvent:Connect(function(payload)
-            if payload and typeof(payload) == "table" then
-                QuestController:Set(payload)
-            else
-                QuestController:Reset()
-            end
-        end)
+        ReplicatedStorage.Remotes.QuestUpdate.OnClientEvent:Connect(handleQuestPayload)
 end)
 
 function Spirit.HasActiveQuestEvent()
