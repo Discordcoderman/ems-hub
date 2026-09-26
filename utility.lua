@@ -1,4 +1,7 @@
 -- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority)
+-- Reach logic rewritten: horizontal-only arrival check, hard-snap
+-- fallback when the tween stalls, time-based blacklist so a fruit
+-- that genuinely can't be collected stops re-triggering.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
@@ -79,7 +82,7 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS — name-gated
+-- COLLECT DROPS
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
@@ -88,10 +91,30 @@ local priorityName   = nil
 local priorityStart  = 0
 
 local ownedFruitCache = {}
+-- Time-based blacklist — name -> expiry unix time. A fruit that
+-- fails to pick up 3× gets 5 minutes out, not a permanent block.
 local blacklist = {}
+-- Per-fruit failure counter. Reset on successful pickup.
+local fruitAttempts = {}
+
 local lastCacheRefresh = 0
 local lastScan = 0
 local cachedFruit = nil
+
+-- Horizontal-only reach check — vertical gap shouldn't block touch
+-- interest. A fruit sitting on a cliff or spawned high is still
+-- collectable if we're directly below it.
+local ARRIVE_HORIZ   = 25      -- studs of horizontal distance = arrived
+local ARRIVE_TIMEOUT = 30      -- seconds before we hard-snap
+local RETWEEN_EVERY  = 3       -- seconds between tween re-issues
+local TOUCH_DURATION = 6       -- seconds of touch-interest firing
+local BLACKLIST_TIME = 300     -- 5 minutes out after 3 fails
+
+local function horizDist(a, b)
+    local dx = a.X - b.X
+    local dz = a.Z - b.Z
+    return math.sqrt(dx * dx + dz * dz)
+end
 
 local function resolveFruitName(fruit)
     if not fruit then return nil end
@@ -125,10 +148,25 @@ local function findHandle(fruit)
     return nil
 end
 
+local function isBlacklisted(name)
+    local exp = blacklist[name]
+    if not exp then return false end
+    if os.time() > exp then
+        blacklist[name] = nil
+        return false
+    end
+    return true
+end
+
+local function blacklistFruit(name)
+    blacklist[name] = os.time() + BLACKLIST_TIME
+    print("[fruit] blacklisted " .. name .. " for 5min")
+end
+
 local function refreshOwnedFruits()
     if os.time() - lastCacheRefresh < 60 then return end
     lastCacheRefresh = os.time()
-    blacklist = {}
+    -- No blacklist wipe here — blacklist is time-based now.
     local ok, inv = pcall(function()
         return Remotes.CommF_:InvokeServer("getInventoryFruits")
     end)
@@ -187,7 +225,7 @@ CD:RegisterMethod("Refresh", function()
         if priorityTarget.Parent then
             return priorityTarget
         end
-        print("[fruit] target disappeared — collected")
+        print("[fruit] target disappeared — collected, resuming farming")
         releasePriority()
         return nil
     end
@@ -203,7 +241,7 @@ CD:RegisterMethod("Refresh", function()
     for _, obj in ipairs(workspace:GetDescendants()) do
         if isFruitModel(obj) then
             local name = resolveFruitName(obj)
-            if name and not blacklist[name] and not ownedFruitCache[name] then
+            if name and not isBlacklisted(name) and not ownedFruitCache[name] then
                 cachedFruit = obj
                 return cachedFruit
             end
@@ -221,6 +259,8 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
+    -- First commit on this fruit. Holds the flag; scan keeps returning
+    -- it until we release.
     if priorityTarget ~= fruit then
         priorityTarget = fruit
         priorityName   = name
@@ -236,64 +276,103 @@ CD:RegisterMethod("Start", function(fruit)
 
     local handle = findHandle(fruit)
     if not handle or not handle.Position then
-        print("[fruit] no Handle on " .. name)
-        blacklist[name] = true
+        print("[fruit] no Handle on " .. name .. " — skipping")
+        blacklistFruit(name)
         releasePriority()
         return
     end
 
-    SetTask("MainTask", "Fruit: " .. name .. " (" .. math.floor((hrp.Position - handle.Position).Magnitude) .. " studs)")
-    Spirit.TweenController.Create(CFrame.new(handle.Position))
+    local fp = handle.Position
 
-    local arriveDeadline = tick() + 15
-    local arrived = false
-    while tick() < arriveDeadline do
-        if not fruit.Parent then break end
-        local c = LocalPlayer.Character
-        local h = c and c:FindFirstChild("HumanoidRootPart")
-        if not h then break end
-        if (h.Position - handle.Position).Magnitude < 8 then
-            arrived = true
-            break
+    -- ── Approach ──
+    -- If we're already horizontally close, skip the tween and snap.
+    -- If not, tween toward the fruit, re-issue the tween if it stalls,
+    -- then hard-snap when the timeout hits. The snap is what actually
+    -- guarantees the pickup — the tween is just the smooth approach.
+    local horiz = horizDist(hrp.Position, fp)
+
+    if horiz > ARRIVE_HORIZ then
+        SetTask("MainTask", "Fruit: " .. name .. " (" .. math.floor(horiz) .. " studs)")
+        Spirit.TweenController.Create(CFrame.new(fp))
+
+        local arriveDeadline = tick() + ARRIVE_TIMEOUT
+        local lastRetween    = tick()
+        while tick() < arriveDeadline do
+            if not fruit.Parent then break end
+            local c = LocalPlayer.Character
+            local h = c and c:FindFirstChild("HumanoidRootPart")
+            if not h then break end
+            if horizDist(h.Position, fp) < ARRIVE_HORIZ then
+                break
+            end
+            if tick() - lastRetween > RETWEEN_EVERY then
+                Spirit.TweenController.Create(CFrame.new(fp))
+                lastRetween = tick()
+            end
+            task.wait(0.1)
         end
-        task.wait(0.1)
     end
 
+    -- Fruit vanished during approach — server or another player got it.
     if not fruit.Parent then
-        print("[fruit] collected " .. name)
+        print("[fruit] collected " .. name .. " (vanished)")
         local tool = toolInBackpack(name)
         if tool then
             pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
             task.wait(0.5)
         end
+        fruitAttempts[name] = nil
         releasePriority()
         return
     end
 
-    if not arrived then
-        print("[fruit] couldn't reach " .. name)
-        blacklist[name] = true
-        releasePriority()
-        return
+    -- ── Hard snap ──
+    -- Cancel any leftover tween and set the HRP directly on the fruit
+    -- so the touch definitely lands. Small enough jump that the server
+    -- treats it as a normal pickup.
+    if Spirit.TweenInstance then
+        pcall(function() Spirit.TweenInstance:Cancel() end)
+    end
+    Spirit.shouldTween = false
+
+    local c = LocalPlayer.Character
+    local h = c and c:FindFirstChild("HumanoidRootPart")
+    if h and handle.Parent then
+        h.CFrame = CFrame.new(fp + Vector3.new(0, 3, 0))
+        task.wait(0.1)
     end
 
-    local touchDeadline = tick() + 3
+    -- ── Touch-interest loop ──
+    SetTask("MainTask", "Fruit: " .. name .. " — picking up")
+    local touchDeadline = tick() + TOUCH_DURATION
     while tick() < touchDeadline do
         if not fruit.Parent then break end
+
+        -- Re-grab the handle each iteration — the fruit part may
+        -- re-parent or its descendants change after server pickup.
+        local h2 = findHandle(fruit)
+        if not h2 or not h2.Parent then break end
+
         pcall(function()
-            if firetouchinterest and handle.Parent then
-                local c = LocalPlayer.Character
-                local h = c and c:FindFirstChild("HumanoidRootPart")
-                if h then
-                    firetouchinterest(h, handle, 0)
+            if firetouchinterest then
+                local cc = LocalPlayer.Character
+                local hh = cc and cc:FindFirstChild("HumanoidRootPart")
+                if hh then
+                    -- Snap to the fruit before each touch so distance
+                    -- never blocks the server-side hitbox.
+                    if horizDist(hh.Position, h2.Position) > 5 then
+                        hh.CFrame = CFrame.new(h2.Position + Vector3.new(0, 3, 0))
+                    end
+                    firetouchinterest(hh, h2, 0)
                     task.wait(0.05)
-                    firetouchinterest(h, handle, 1)
+                    firetouchinterest(hh, h2, 1)
                 end
             end
         end)
         task.wait(0.4)
     end
 
+    -- ── Outcome determination ──
     if not fruit.Parent then
         print("[fruit] collected " .. name)
         local tool = toolInBackpack(name)
@@ -301,6 +380,7 @@ CD:RegisterMethod("Start", function(fruit)
             pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
             task.wait(0.5)
         end
+        fruitAttempts[name] = nil
         releasePriority()
         return
     end
@@ -310,6 +390,7 @@ CD:RegisterMethod("Start", function(fruit)
         print("[fruit] picked up — storing " .. name)
         pcall(function() Remotes.CommF_:InvokeServer("StoreFruit", name, tool) end)
         task.wait(0.6)
+        fruitAttempts[name] = nil
         releasePriority()
         return
     end
@@ -319,12 +400,20 @@ CD:RegisterMethod("Start", function(fruit)
 
     if not fruit.Parent or ownsFruit(name) then
         print("[fruit] collected via StoreFruit " .. name)
+        fruitAttempts[name] = nil
         releasePriority()
         return
     end
 
-    print("[fruit] " .. name .. " rejected — skipping")
-    blacklist[name] = true
+    -- Failed this attempt. Bump the counter; on the third failure,
+    -- time-out the fruit so we stop fighting it.
+    local attempts = (fruitAttempts[name] or 0) + 1
+    fruitAttempts[name] = attempts
+    if attempts >= 3 then
+        blacklistFruit(name)
+    else
+        print("[fruit] " .. name .. " attempt " .. attempts .. " failed — will retry")
+    end
     releasePriority()
 end)
 
