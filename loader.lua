@@ -7,6 +7,12 @@
 local BRANCH = "main"
 local BASE = ("https://raw.githubusercontent.com/Discordcoderman/ems-hub/%s/%%s"):format(BRANCH)
 
+-- ═══════════════════════════════════════════════════════════════
+-- TEAM — matches Config.Team in data.lua. Change here or in the
+-- Config block; loader is the source of truth on first boot.
+-- ═══════════════════════════════════════════════════════════════
+local TEAM = "Pirates"
+
 local MODULES = {
     "core.lua","data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
     "tasks.lua","level_farm.lua","player.lua","mele.lua",
@@ -18,54 +24,32 @@ local MODULES = {
 local env = getgenv()
 
 -- ═══════════════════════════════════════════════════════════════
--- TEAM SELECT — click Pirates on the "Pick A Side" GUI
--- Path: PlayerGui.Main.ChooseTeam.Container.Pirates
--- Runs concurrently with module loading.
+-- TEAM SELECT — exact pattern from the reference script:
+--   repeat
+--       task.wait()
+--       CommF_:InvokeServer("SetTeam", Config.Team)
+--   until LocalPlayer.Character
+-- The server accepts SetTeam from a client without a character and
+-- spawns the player on the chosen side. Loop stops the instant the
+-- character exists so we don't fire after spawn.
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
-    local Players = game:GetService("Players")
-    local lplayer = Players.LocalPlayer
-    print("[EMS] waiting for team select GUI…")
+    local lplayer = game:GetService("Players").LocalPlayer
+    print("[EMS] selecting team — " .. TEAM)
 
     local deadline = os.time() + 90
-    local clickedOnce = false
-
-    while os.time() < deadline do
-        local pg = lplayer:FindFirstChild("PlayerGui")
-        if pg then
-            local main = pg:FindFirstChild("Main")
-            local chooseTeam = main and main:FindFirstChild("ChooseTeam")
-            if chooseTeam and chooseTeam.Visible then
-                local container = chooseTeam:FindFirstChild("Container")
-                if container then
-                    local pirates = container:FindFirstChild("Pirates")
-                    if pirates then
-                        local cx = pirates.AbsolutePosition.X + pirates.AbsoluteSize.X / 2
-                        local cy = pirates.AbsolutePosition.Y + pirates.AbsoluteSize.Y / 2
-                        if cx > 0 and cy > 0 then
-                            local VIM = game:GetService("VirtualInputManager")
-                            VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-                            task.wait(0.08)
-                            VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-                            print(("[EMS] clicked Pirates at (%d,%d)"):format(cx, cy))
-                            clickedOnce = true
-                            task.wait(1.5)
-                            if chooseTeam.Visible then
-                                VIM:SendMouseButtonEvent(cx, cy, 0, true, game, 1)
-                                task.wait(0.08)
-                                VIM:SendMouseButtonEvent(cx, cy, 0, false, game, 1)
-                            end
-                            if clickedOnce then return end
-                        end
-                    end
-                end
-            elseif clickedOnce then
-                return
-            end
+    repeat
+        task.wait()
+        pcall(function()
+            game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", TEAM)
+        end)
+        if os.time() > deadline then
+            print("[EMS] team select timeout — proceeding")
+            return
         end
-        task.wait(0.3)
-    end
-    print("[EMS] team select timeout — proceeding")
+    until lplayer.Character
+
+    print("[EMS] team assembled — " .. TEAM)
 end)
 
 local function load_module(path)
