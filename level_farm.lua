@@ -410,7 +410,6 @@ LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
-    -- Sea 3 Bones conversion
     if Spirit.SeaIndex == 3 then
         if (ScriptStorage.Backpack.Bones or {Count = 0}).Count >= 50 then
             if os.time() > (BonesCooldown or 0) then
@@ -426,7 +425,6 @@ LF:RegisterMethod("Start", function(step)
         end
     end
 
-    -- Shanda / God's Guard shortcut path
     if step == 2 or step == 3 then
         local mobName = (step == 2) and "Shanda" or "God's Guard"
         local skyCF = (step == 2) and CFrame.new(-7894, 5547, -380) or CFrame.new(-4650, 872, -1775)
@@ -449,31 +447,39 @@ LF:RegisterMethod("Start", function(step)
         return
     end
 
-    -- Quest state — check remote controller first
+    -- ─── Check whether we already have the correct quest ────────
     local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
     local onCorrectQuest = (remoteQuest == Q.Qname)
 
-    if not onCorrectQuest then
-        local now = os.time()
-        if now - LastStartQuest > 5 then
-            LastStartQuest = now
-            if Q.PosQ then
-                local dist = Spirit.CaculateDistance(Q.PosQ)
-                if dist > 15 then
-                    Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
-                else
-                    pcall(function()
-                        Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
-                    end)
-                    print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
-                end
-            end
-        end
+    if onCorrectQuest then
+        Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
+        Spirit.CombatController.Attack(Q.Mon)
+        return
     end
 
-    -- ═══ ALWAYS attack — never wait for registration ═══
-    Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon)
-    Spirit.CombatController.Attack(Q.Mon)
+    -- ─── No correct quest. Walk to the giver first ──────────────
+    if not Q.PosQ then return end
+    local dist = Spirit.CaculateDistance(Q.PosQ)
+
+    if dist > 15 then
+        Spirit.SetTask("MainTask", "Level Farm | Walking to " .. Q.Mon .. " giver (" .. math.floor(dist) .. ")")
+        Spirit.TweenController.Create(Q.PosQ + Vector3.new(0, 5, 3))
+        return   -- do NOT attack yet, we need to reach the NPC
+    end
+
+    -- ─── At the NPC. Fire StartQuest on a 5s cooldown ───────────
+    local now = os.time()
+    if now - LastStartQuest > 5 then
+        LastStartQuest = now
+        pcall(function()
+            Spirit.J.StartQuest(Spirit.J, Q.Qname, Q.Qdata)
+        end)
+        print(("[LF] fired StartQuest %s/%s"):format(Q.Qname, Q.Qdata))
+    end
+
+    -- Wait at the NPC until quest registers. Don't attack yet —
+    -- otherwise the NPC tween gets cancelled and we never accept.
+    Spirit.SetTask("MainTask", "Level Farm | " .. Q.Mon .. " | Accepting quest")
 end)
 
 Spirit.__level_farm_ready = true
