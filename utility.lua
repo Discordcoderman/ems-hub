@@ -3,13 +3,16 @@ local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
 
-local Services      = Spirit.Services
+local Services          = Spirit.Services
 local ReplicatedStorage = Services.ReplicatedStorage
-local LocalPlayer   = Spirit.LocalPlayer
-local ScriptStorage = Spirit.ScriptStorage
-local Remotes       = Spirit.Remotes
-local SetTask       = Spirit.SetTask
-local CheckItem     = Spirit.CheckItem
+local LocalPlayer       = Spirit.LocalPlayer
+local ScriptStorage     = Spirit.ScriptStorage
+local Remotes           = Spirit.Remotes
+local SetTask           = Spirit.SetTask
+local CheckItem         = Spirit.CheckItem
+
+-- Global gate — other tasks check this before taking the dispatcher.
+_G.FruitPriorityActive = false
 
 -- ═══════════════════════════════════════════════════════════════
 -- TREVOR
@@ -77,18 +80,18 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS — absolute priority while a fruit is targeted.
--- Commits to a target, refuses to yield the dispatcher, and only
--- releases when the fruit is collected or storage rejects it.
+-- COLLECT DROPS
+-- Commits to one fruit. While committed, the dispatcher routes ALL
+-- ticks straight to this task (tasks.lua's runFruitPriority), so
+-- nothing can cancel the tween mid-flight. Releases only when the
+-- fruit is collected or definitively unreachable.
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
--- Priority state — persists across dispatcher ticks
 local priorityTarget = nil
 local priorityName   = nil
 local priorityStart  = 0
 
--- Fruit-name caches
 local ownedFruitCache = {}
 local blacklist = {}
 local lastCacheRefresh = 0
@@ -112,8 +115,6 @@ local function isFruitModel(obj)
     return obj:FindFirstChild("FruitAnimator") ~= nil
 end
 
--- Handle may be nested: outer Fruit → child Fruit → Handle.
--- Search recursively for a BasePart named Handle.
 local function findHandle(fruit)
     if not fruit then return nil end
     local direct = fruit:FindFirstChild("Handle")
@@ -143,7 +144,6 @@ local function refreshOwnedFruits()
     end
 end
 
--- Check if we already own a fruit by name (server inventory)
 local function ownsFruit(name)
     if not name then return false end
     if ownedFruitCache[name] then return true end
@@ -161,7 +161,6 @@ local function ownsFruit(name)
     return false
 end
 
--- Check if a tool with this OriginalName is in the Backpack
 local function toolInBackpack(originalName)
     if not originalName then return nil end
     local bp = LocalPlayer:FindFirstChild("Backpack")
@@ -183,15 +182,14 @@ local function releasePriority()
     priorityStart  = 0
     lastScan = 0
     cachedFruit = nil
+    _G.FruitPriorityActive = false
 end
 
 CD:RegisterMethod("Refresh", function()
-    -- ── While committed, always yield the dispatcher back to us ──
     if priorityTarget then
         if priorityTarget.Parent then
             return priorityTarget
         end
-        -- Target vanished mid-tick → collected, release
         print("[fruit] target disappeared — collected, resuming farming")
         releasePriority()
         return nil
@@ -199,7 +197,6 @@ CD:RegisterMethod("Refresh", function()
 
     refreshOwnedFruits()
 
-    -- Scan cache — 1s so new spawns are caught fast
     if os.time() - lastScan < 1 then
         return cachedFruit
     end
@@ -223,12 +220,11 @@ CD:RegisterMethod("Start", function(fruit)
 
     local name = getFruitName(fruit)
 
-    -- Commit to this fruit — Refresh now always returns it until
-    -- either it's collected or storage rejects it
     if priorityTarget ~= fruit then
         priorityTarget = fruit
         priorityName   = name
         priorityStart  = tick()
+        _G.FruitPriorityActive = true
         print("[fruit] committed to " .. name)
     end
 
@@ -247,10 +243,8 @@ CD:RegisterMethod("Start", function(fruit)
 
     SetTask("MainTask", "Fruit: " .. name .. " (" .. math.floor((hrp.Position - handle.Position).Magnitude) .. " studs)")
 
-    -- ── Tween to the fruit ──
     Spirit.TweenController.Create(CFrame.new(handle.Position))
 
-    -- Wait for arrival or timeout
     local arriveDeadline = tick() + 15
     local arrived = false
     while tick() < arriveDeadline do
@@ -265,10 +259,8 @@ CD:RegisterMethod("Start", function(fruit)
         task.wait(0.1)
     end
 
-    -- Fruit vanished during tween → server auto-collected on touch
     if not fruit.Parent then
         print("[fruit] collected " .. name)
-        -- Store any fruit tool that appeared in backpack
         local tool = toolInBackpack(name)
         if tool then
             pcall(function()
@@ -287,7 +279,6 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
-    -- ── Fire touch interest repeatedly ──
     local touchDeadline = tick() + 3
     while tick() < touchDeadline do
         if not fruit.Parent then break end
@@ -306,9 +297,6 @@ CD:RegisterMethod("Start", function(fruit)
         task.wait(0.4)
     end
 
-    -- ── Determine outcome ──
-
-    -- A: fruit vanished → server accepted the touch
     if not fruit.Parent then
         print("[fruit] collected " .. name)
         local tool = toolInBackpack(name)
@@ -322,7 +310,6 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
-    -- B: fruit still there, but a tool appeared in backpack
     local tool = toolInBackpack(name)
     if tool then
         print("[fruit] picked up into backpack — storing " .. name)
@@ -334,7 +321,6 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
-    -- C: try StoreFruit directly on the world model
     pcall(function()
         Remotes.CommF_:InvokeServer("StoreFruit", name, fruit)
     end)
@@ -346,8 +332,6 @@ CD:RegisterMethod("Start", function(fruit)
         return
     end
 
-    -- D: Nothing worked. Storage likely full or duplicate on server.
-    -- This is the ONLY failure that releases priority.
     print("[fruit] " .. name .. " rejected (storage full or duplicate) — skipping")
     blacklist[name] = true
     releasePriority()
