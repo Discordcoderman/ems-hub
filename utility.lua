@@ -1,4 +1,4 @@
--- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority), stubs
+-- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority)
 local Spirit = getgenv().Spirit
 if not Spirit then error("[utility] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
@@ -77,31 +77,21 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS — walk to the fruit, touch its Handle.
--- Blox Fruits auto-picks-up fruit on Handle touch. No StoreFruit
--- needed here (StoreFruit is only for moving tools out of Backpack
--- into permanent inventory — that's a separate flow).
+-- COLLECT DROPS — priority #1, fastest scan, fastest tween
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
--- Fruits already owned by us (by name), refreshed every 60s
 local ownedFruitCache = {}
+local blacklist = {}
 local lastCacheRefresh = 0
 
--- Fruits we couldn't touch (dead/rejected) — skip for 60s
-local blacklist = {}
-
--- Read the real name from OriginalName (attr or child StringValue)
 local function getFruitName(fruit)
     local attr = fruit:GetAttribute("OriginalName")
     if attr and attr ~= "" then return tostring(attr) end
-
     local child = fruit:FindFirstChild("OriginalName")
     if child and (child:IsA("StringValue") or child:IsA("ValueBase")) then
         return tostring(child.Value)
     end
-
-    -- Fallback: model name; usually "Fruit" but at least it's not nil
     return tostring(fruit.Name)
 end
 
@@ -111,12 +101,10 @@ local function isFruitModel(obj)
     return obj:FindFirstChild("FruitAnimator") ~= nil
 end
 
--- Refresh owned-fruits cache
 local function refreshOwnedFruits()
     if os.time() - lastCacheRefresh < 60 then return end
     lastCacheRefresh = os.time()
     blacklist = {}
-
     local ok, inv = pcall(function()
         return Remotes.CommF_:InvokeServer("getInventoryFruits")
     end)
@@ -129,51 +117,14 @@ local function refreshOwnedFruits()
     end
 end
 
--- Visible walk — moves the character toward a position in small steps
--- so the model actually appears to walk, not teleport.
-local function walkToPoint(targetPos, speed)
-    speed = speed or 60
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-
-    -- Disable collision on the character so we don't get stuck
-    for _, p in ipairs(char:GetDescendants()) do
-        if p:IsA("BasePart") then p.CanCollide = false end
-    end
-
-    local deadline = tick() + 20
-    while tick() < deadline do
-        char = LocalPlayer.Character
-        if not char then return false end
-        hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return false end
-
-        local cur = hrp.Position
-        local diff = targetPos - cur
-        local dist = diff.Magnitude
-        if dist < 5 then
-            return true
-        end
-
-        local step = speed * 0.05
-        if step > dist then step = dist end
-        pcall(function()
-            hrp.CFrame = CFrame.new(cur + diff.Unit * step)
-        end)
-        task.wait(0.05)
-    end
-    return false
-end
-
+-- 1-second cache — fruit detected within a second of spawning
 local lastScan = 0
 local cachedFruit = nil
 
 CD:RegisterMethod("Refresh", function()
     refreshOwnedFruits()
 
-    if os.time() - lastScan < 5 then
+    if os.time() - lastScan < 1 then
         return cachedFruit
     end
     lastScan = os.time()
@@ -205,23 +156,31 @@ CD:RegisterMethod("Start", function(fruit)
     if not handle or not handle.Position then return end
 
     local name = getFruitName(fruit)
-    print("[fruit] walking to " .. name)
-    SetTask("MainTask", "Walking to fruit: " .. name)
+    print("[fruit] tween to " .. name)
+    SetTask("MainTask", "Collecting fruit: " .. name)
 
-    -- Visible walk to the fruit
-    local arrived = walkToPoint(handle.Position + Vector3.new(0, 0, 0), 60)
+    -- Fast tween via the block-tween system (165 studs/sec in tween.lua)
+    Spirit.TweenController.Create(CFrame.new(handle.Position))
 
-    if not arrived or not fruit.Parent then
-        -- Couldn't reach — blacklist for 60s so we don't loop on it
-        blacklist[name] = true
-        print("[fruit] couldn't reach " .. name .. " — skipping")
-        lastScan = 0
-        cachedFruit = nil
+    -- Wait for arrival (max 10s)
+    local arrivedAt = tick() + 10
+    while tick() < arrivedAt do
+        char = LocalPlayer.Character
+        if not char then return end
+        hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        if (hrp.Position - handle.Position).Magnitude < 6 then
+            break
+        end
+        if not fruit.Parent then break end
+        task.wait(0.1)
+    end
+
+    if not fruit.Parent then
+        lastScan = 0 cachedFruit = nil
         return
     end
 
-    -- Now touch the Handle. The game itself picks up the fruit and
-    -- places it in your Backpack. We do NOT call StoreFruit here.
     SetTask("MainTask", "Touching fruit: " .. name)
     pcall(function()
         if firetouchinterest then
@@ -230,15 +189,11 @@ CD:RegisterMethod("Start", function(fruit)
             firetouchinterest(hrp, handle, 1)
         end
     end)
+    task.wait(0.6)
 
-    -- Give the server a moment to register the pickup
-    task.wait(0.8)
-
-    -- If the fruit is still there after touching, blacklist it so we
-    -- stop trying. It'll be retried after the 60s cache refresh.
     if fruit.Parent then
         blacklist[name] = true
-        print("[fruit] " .. name .. " still on ground — skipping for 60s")
+        print("[fruit] " .. name .. " still on ground — skipping")
     else
         print("[fruit] collected " .. name)
     end
