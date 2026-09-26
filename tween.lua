@@ -26,7 +26,6 @@ Spirit.TweenDebounce  = false
 Spirit.TweenInstance  = nil
 Spirit.TweenInstance2 = nil
 
--- Noclip state tracking — only toggle collision on state change, never per-tick.
 local noclipActive = false
 
 local function setCharacterCollision(state)
@@ -40,16 +39,12 @@ local function setCharacterCollision(state)
 end
 Spirit.SetCharacterCollision = setCharacterCollision
 
--- OnFarm watcher — also drives noclip toggling
 task.spawn(function()
     while task.wait() do
         local shouldNoclip = false
-
         if block and block.Parent == Workspace and Spirit.shouldTween then
             shouldNoclip = true
         end
-
-        -- Sync block to character when active
         if shouldNoclip then
             if not noclipActive then
                 noclipActive = true
@@ -61,17 +56,14 @@ task.spawn(function()
                 setCharacterCollision(true)
             end
         end
-
         getgenv().OnFarm = shouldNoclip
     end
 end)
 
--- Character ↔ block sync
 task.spawn(function()
     local lp = LocalPlayer
     repeat task.wait() until lp.Character and lp.Character.PrimaryPart
     block.CFrame = lp.Character.PrimaryPart.CFrame
-
     while task.wait() do
         pcall(function()
             if getgenv().OnFarm then
@@ -89,7 +81,6 @@ task.spawn(function()
     end
 end)
 
--- Home points
 local HomePoints = {}
 pcall(function()
     for _, v in ipairs(Spirit.Services.ReplicatedStorage.NPCs:GetChildren()) do
@@ -100,7 +91,6 @@ pcall(function()
 end)
 Spirit.HomePoints = HomePoints
 
--- Portal lookup
 local portalCooldown = 0
 local function GetPortal(target)
     if tick() - portalCooldown < 2 then return nil end
@@ -154,7 +144,6 @@ function Spirit.HoverOver(a, height)
     return CFrame.new(Vector3.new(a.X, a.Y, a.Z) + Vector3.new(0, height, 0))
 end
 
--- TweenController
 local TweenController = {}
 Spirit.TweenController = TweenController
 
@@ -204,7 +193,6 @@ function TweenController.Create(target)
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    -- Anti-fall body velocity on the head (only holds vertical)
     local head = character:WaitForChild("Head")
     if not head:FindFirstChild("eltrul") then
         local bv = Instance.new("BodyVelocity")
