@@ -1,10 +1,4 @@
--- ui.lua
--- EMS HUB ScreenGui. Patches baked in:
---   * TELEPORT tab removed
---   * AutoCollect/AutoGacha toggles removed (forced true in State)
---   * SetText hardened with pcall + .Parent guards
--- Publishes Spirit.EmsUI so core.lua's SetText wrapper can find it.
-
+-- ui.lua — EMS HUB purple theme, no toggles, item dot indicators
 local Spirit = getgenv().Spirit
 if not Spirit then error("[ui] core.lua not loaded") end
 
@@ -13,43 +7,32 @@ local CoreGui      = Spirit.CoreGui
 local TweenService = Spirit.TweenService
 local LocalPlayer  = Spirit.LocalPlayer
 
--- Destroy any prior EMS UI (e.g. on script reload)
 for _, container in ipairs({CoreGui, LocalPlayer:FindFirstChild("PlayerGui")}) do
     if container then
-        for _, name in ipairs({"EmsHubUI"}) do
-            pcall(function()
-                local old = container:FindFirstChild(name)
-                if old then old:Destroy() end
-            end)
-        end
+        pcall(function()
+            local old = container:FindFirstChild("EmsHubUI")
+            if old then old:Destroy() end
+        end)
     end
 end
 
 local EmsUI = {Instances = {}}
 Spirit.EmsUI = EmsUI
 
--- ═══════════════════════════════════════════════════════════════
--- PALETTE
--- ═══════════════════════════════════════════════════════════════
 local C = {
-    panel     = Color3.fromRGB(20, 20, 24),
-    card      = Color3.fromRGB(28, 28, 33),
-    cardHover = Color3.fromRGB(36, 36, 42),
-    border    = Color3.fromRGB(45, 45, 52),
-    accent    = Color3.fromRGB(190, 230, 60),
-    text      = Color3.fromRGB(228, 228, 231),
-    muted     = Color3.fromRGB(130, 130, 140),
-    success   = Color3.fromRGB(74, 222, 128),
-    danger    = Color3.fromRGB(239, 68, 68),
-    frag      = Color3.fromRGB(180, 200, 255),
-    race      = Color3.fromRGB(255, 160, 210),
-    beli      = Color3.fromRGB(120, 230, 120),
-    melee     = Color3.fromRGB(255, 220, 120),
+    panel      = Color3.fromRGB(18, 12, 26),
+    border     = Color3.fromRGB(120, 60, 180),
+    borderSoft = Color3.fromRGB(60, 30, 90),
+    text       = Color3.fromRGB(230, 230, 240),
+    muted      = Color3.fromRGB(150, 130, 170),
+    purple     = Color3.fromRGB(200, 100, 255),
+    pink       = Color3.fromRGB(255, 120, 200),
+    green      = Color3.fromRGB(80, 220, 120),
+    red        = Color3.fromRGB(230, 60, 80),
+    rowBg      = Color3.fromRGB(28, 18, 40),
+    accentBar  = Color3.fromRGB(60, 220, 100),
 }
 
--- ═══════════════════════════════════════════════════════════════
--- ROOT
--- ═══════════════════════════════════════════════════════════════
 local gui = Instance.new("ScreenGui")
 gui.Name = "EmsHubUI"
 gui.Parent = CoreGui
@@ -63,88 +46,74 @@ panel.Name = "Panel"
 panel.Parent = gui
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.Position = UDim2.new(0.5, 0, 0.5, 0)
-panel.Size = UDim2.new(0, 420, 0, 520)
+panel.Size = UDim2.new(0, 540, 0, 420)
 panel.BackgroundColor3 = C.panel
 panel.BorderSizePixel = 0
 panel.Active = true
 panel.Draggable = true
 panel.ClipsDescendants = true
-Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
 
-local panelBorder = Instance.new("UIStroke", panel)
-panelBorder.Color = C.border
-panelBorder.Thickness = 1
+local panelStroke = Instance.new("UIStroke", panel)
+panelStroke.Color = C.border
+panelStroke.Thickness = 1.5
 
 local panelGrad = Instance.new("UIGradient", panel)
 panelGrad.Rotation = 90
 panelGrad.Color = ColorSequence.new{
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(24, 24, 28)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 16, 20)),
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(22, 14, 30)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 8, 20)),
 }
 EmsUI.Panel = panel
 
--- ═══════════════════════════════════════════════════════════════
--- HEADER
--- ═══════════════════════════════════════════════════════════════
+local accentBar = Instance.new("Frame")
+accentBar.Parent = panel
+accentBar.Size = UDim2.new(1, 0, 0, 3)
+accentBar.BackgroundColor3 = C.accentBar
+accentBar.BorderSizePixel = 0
+Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0, 2)
+
 local header = Instance.new("Frame")
 header.Parent = panel
-header.Size = UDim2.new(1, 0, 0, 62)
+header.Position = UDim2.new(0, 0, 0, 3)
+header.Size = UDim2.new(1, 0, 0, 44)
 header.BackgroundTransparency = 1
 
-local headerLine = Instance.new("Frame")
-headerLine.Parent = header
-headerLine.AnchorPoint = Vector2.new(0.5, 1)
-headerLine.Position = UDim2.new(0.5, 0, 1, 0)
-headerLine.Size = UDim2.new(1, -32, 0, 1)
-headerLine.BackgroundColor3 = C.border
-headerLine.BorderSizePixel = 0
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Parent = header
+titleLbl.BackgroundTransparency = 1
+titleLbl.AnchorPoint = Vector2.new(0.5, 0)
+titleLbl.Position = UDim2.new(0.5, 0, 0, 8)
+titleLbl.Size = UDim2.new(1, -80, 0, 22)
+titleLbl.Text = "EMS HUB"
+titleLbl.Font = Enum.Font.GothamBold
+titleLbl.TextSize = 18
+titleLbl.TextColor3 = C.purple
+titleLbl.TextXAlignment = Enum.TextXAlignment.Center
+local titleGrad = Instance.new("UIGradient", titleLbl)
+titleGrad.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 130, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 120, 200)),
+}
 
-local logoDot = Instance.new("Frame")
-logoDot.Parent = header
-logoDot.Position = UDim2.new(0, 20, 0, 24)
-logoDot.Size = UDim2.new(0, 10, 0, 10)
-logoDot.BackgroundColor3 = C.accent
-logoDot.BorderSizePixel = 0
-Instance.new("UICorner", logoDot).CornerRadius = UDim.new(1, 0)
-
-local glow = Instance.new("ImageLabel")
-glow.Parent = logoDot
-glow.AnchorPoint = Vector2.new(0.5, 0.5)
-glow.Position = UDim2.new(0.5, 0, 0.5, 0)
-glow.Size = UDim2.new(3, 0, 3, 0)
-glow.BackgroundTransparency = 1
-glow.Image = "rbxassetid://5028857084"
-glow.ImageColor3 = C.accent
-glow.ImageTransparency = 0.4
-
-local title = Instance.new("TextLabel")
-title.Parent = header
-title.BackgroundTransparency = 1
-title.Position = UDim2.new(0, 38, 0, 16)
-title.Size = UDim2.new(1, -100, 0, 24)
-title.Text = "EMS HUB"
-title.Font = Enum.Font.FredokaOne
-title.TextSize = 22
-title.TextColor3 = C.text
-title.TextXAlignment = Enum.TextXAlignment.Left
-
-local subtitle = Instance.new("TextLabel")
-subtitle.Parent = header
-subtitle.BackgroundTransparency = 1
-subtitle.Position = UDim2.new(0, 39, 0, 38)
-subtitle.Size = UDim2.new(1, -100, 0, 14)
-subtitle.Text = "v3.0  •  BLOX FRUITS"
-subtitle.Font = Enum.Font.GothamBold
-subtitle.TextSize = 9
-subtitle.TextColor3 = C.muted
-subtitle.TextXAlignment = Enum.TextXAlignment.Left
+local subtitleLbl = Instance.new("TextLabel")
+subtitleLbl.Parent = header
+subtitleLbl.BackgroundTransparency = 1
+subtitleLbl.AnchorPoint = Vector2.new(0.5, 0)
+subtitleLbl.Position = UDim2.new(0.5, 0, 0, 28)
+subtitleLbl.Size = UDim2.new(1, -80, 0, 12)
+subtitleLbl.Text = "v3.0 · BLOX FRUITS"
+subtitleLbl.Font = Enum.Font.GothamBold
+subtitleLbl.TextSize = 9
+subtitleLbl.TextColor3 = C.muted
+subtitleLbl.TextXAlignment = Enum.TextXAlignment.Center
 
 local closeBtn = Instance.new("TextButton")
 closeBtn.Parent = header
 closeBtn.AnchorPoint = Vector2.new(1, 0)
-closeBtn.Position = UDim2.new(1, -16, 0, 20)
+closeBtn.Position = UDim2.new(1, -10, 0, 10)
 closeBtn.Size = UDim2.new(0, 22, 0, 22)
-closeBtn.BackgroundColor3 = C.card
+closeBtn.BackgroundColor3 = C.rowBg
 closeBtn.Text = "×"
 closeBtn.TextColor3 = C.muted
 closeBtn.Font = Enum.Font.GothamBold
@@ -152,206 +121,187 @@ closeBtn.TextSize = 16
 closeBtn.BorderSizePixel = 0
 closeBtn.AutoButtonColor = false
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
-closeBtn.MouseEnter:Connect(function()
-    closeBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
-    closeBtn.TextColor3 = C.danger
-end)
-closeBtn.MouseLeave:Connect(function()
-    closeBtn.BackgroundColor3 = C.card
-    closeBtn.TextColor3 = C.muted
-end)
 closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
 
-local minBtn = Instance.new("TextButton")
-minBtn.Parent = header
-minBtn.AnchorPoint = Vector2.new(1, 0)
-minBtn.Position = UDim2.new(1, -44, 0, 20)
-minBtn.Size = UDim2.new(0, 22, 0, 22)
-minBtn.BackgroundColor3 = C.card
-minBtn.Text = "—"
-minBtn.TextColor3 = C.muted
-minBtn.Font = Enum.Font.GothamBold
-minBtn.TextSize = 12
-minBtn.BorderSizePixel = 0
-minBtn.AutoButtonColor = false
-Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
-minBtn.MouseEnter:Connect(function() minBtn.BackgroundColor3 = C.cardHover end)
-minBtn.MouseLeave:Connect(function() minBtn.BackgroundColor3 = C.card end)
-minBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
+local divider = Instance.new("Frame")
+divider.Parent = panel
+divider.Position = UDim2.new(0, 12, 0, 52)
+divider.Size = UDim2.new(1, -24, 0, 1)
+divider.BackgroundColor3 = C.borderSoft
+divider.BorderSizePixel = 0
 
--- ═══════════════════════════════════════════════════════════════
--- TAB BAR + CONTENT AREA
--- ═══════════════════════════════════════════════════════════════
-local tabBar = Instance.new("Frame")
-tabBar.Parent = panel
-tabBar.Position = UDim2.new(0, 16, 0, 70)
-tabBar.Size = UDim2.new(1, -32, 0, 34)
-tabBar.BackgroundTransparency = 1
-local tabLayout = Instance.new("UIListLayout", tabBar)
-tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-tabLayout.Padding = UDim.new(0, 6)
+local columns = Instance.new("Frame")
+columns.Parent = panel
+columns.Position = UDim2.new(0, 12, 0, 62)
+columns.Size = UDim2.new(1, -24, 0, 290)
+columns.BackgroundTransparency = 1
+local colLayout = Instance.new("UIListLayout", columns)
+colLayout.FillDirection = Enum.FillDirection.Horizontal
+colLayout.Padding = UDim.new(0, 12)
+colLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local content = Instance.new("Frame")
-content.Parent = panel
-content.Position = UDim2.new(0, 16, 0, 116)
-content.Size = UDim2.new(1, -32, 1, -180)
-content.BackgroundTransparency = 1
-content.ClipsDescendants = true
+-- Left column: Account Stats
+local leftCol = Instance.new("Frame")
+leftCol.Parent = columns
+leftCol.LayoutOrder = 1
+leftCol.Size = UDim2.new(0.5, -6, 1, 0)
+leftCol.BackgroundTransparency = 1
 
-local footer = Instance.new("TextLabel")
-footer.Parent = panel
-footer.AnchorPoint = Vector2.new(0.5, 1)
-footer.Position = UDim2.new(0.5, 0, 1, -12)
-footer.Size = UDim2.new(1, -32, 0, 16)
-footer.BackgroundTransparency = 1
-footer.Text = "discord.gg/EmsHub"
-footer.Font = Enum.Font.GothamBold
-footer.TextSize = 11
-footer.TextColor3 = C.muted
-footer.TextXAlignment = Enum.TextXAlignment.Center
+local leftHeader = Instance.new("TextLabel")
+leftHeader.Parent = leftCol
+leftHeader.BackgroundTransparency = 1
+leftHeader.Position = UDim2.new(0, 4, 0, 0)
+leftHeader.Size = UDim2.new(1, 0, 0, 20)
+leftHeader.Text = "Account Stats"
+leftHeader.Font = Enum.Font.GothamBold
+leftHeader.TextSize = 13
+leftHeader.TextColor3 = C.purple
+leftHeader.TextXAlignment = Enum.TextXAlignment.Left
 
-local footSep = Instance.new("Frame")
-footSep.Parent = panel
-footSep.AnchorPoint = Vector2.new(0.5, 1)
-footSep.Position = UDim2.new(0.5, 0, 1, -34)
-footSep.Size = UDim2.new(1, -32, 0, 1)
-footSep.BackgroundColor3 = C.border
-footSep.BorderSizePixel = 0
+local leftList = Instance.new("Frame")
+leftList.Parent = leftCol
+leftList.Position = UDim2.new(0, 0, 0, 26)
+leftList.Size = UDim2.new(1, 0, 1, -26)
+leftList.BackgroundTransparency = 1
+local leftListLayout = Instance.new("UIListLayout", leftList)
+leftListLayout.Padding = UDim.new(0, 6)
+leftListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
--- ═══════════════════════════════════════════════════════════════
--- HELPERS
--- ═══════════════════════════════════════════════════════════════
-local function makeCard(parent, size, pos)
-    local card = Instance.new("Frame")
-    card.Parent = parent
-    card.Size = size
-    card.Position = pos
-    card.BackgroundColor3 = C.card
-    card.BorderSizePixel = 0
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke", card)
-    stroke.Color = C.border
-    stroke.Thickness = 1
-    return card
+local function makeStatRow(label, order)
+    local row = Instance.new("Frame")
+    row.Parent = leftList
+    row.LayoutOrder = order
+    row.Size = UDim2.new(1, 0, 0, 40)
+    row.BackgroundColor3 = C.rowBg
+    row.BackgroundTransparency = 0.4
+    row.BorderSizePixel = 0
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+
+    local nameLbl = Instance.new("TextLabel")
+    nameLbl.Parent = row
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Position = UDim2.new(0, 10, 0, 4)
+    nameLbl.Size = UDim2.new(1, -20, 0, 13)
+    nameLbl.Text = label
+    nameLbl.Font = Enum.Font.GothamBold
+    nameLbl.TextSize = 9
+    nameLbl.TextColor3 = C.muted
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local valLbl = Instance.new("TextLabel")
+    valLbl.Parent = row
+    valLbl.BackgroundTransparency = 1
+    valLbl.Position = UDim2.new(0, 10, 0, 18)
+    valLbl.Size = UDim2.new(1, -20, 0, 18)
+    valLbl.Text = "—"
+    valLbl.Font = Enum.Font.GothamBold
+    valLbl.TextSize = 13
+    valLbl.TextColor3 = C.text
+    valLbl.TextXAlignment = Enum.TextXAlignment.Left
+    return valLbl
 end
 
-local TABS = {}
-local activeTab = nil
-local contentPages = {}
+EmsUI.LevelLabel = makeStatRow("LEVEL", 1)
+EmsUI.RaceLabel  = makeStatRow("RACE", 2)
+EmsUI.BeliLabel  = makeStatRow("BELI", 3)
+EmsUI.FragLabel  = makeStatRow("FRAGMENTS", 4)
+EmsUI.MeleeLabel = makeStatRow("MELEE MASTERY", 5)
+EmsUI.TimerLabel = makeStatRow("UPTIME", 6)
 
-local function makeTab(id, label, order)
-    local btn = Instance.new("TextButton")
-    btn.Parent = tabBar
-    btn.LayoutOrder = order
-    btn.Size = UDim2.new(0, 180, 1, 0)
-    btn.BackgroundColor3 = C.card
-    btn.Text = label
-    btn.TextColor3 = C.muted
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11
-    btn.BorderSizePixel = 0
-    btn.AutoButtonColor = false
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke", btn)
-    stroke.Color = C.border
-    stroke.Thickness = 1
-    stroke.Transparency = 1
+-- Right column: Account Items
+local rightCol = Instance.new("Frame")
+rightCol.Parent = columns
+rightCol.LayoutOrder = 2
+rightCol.Size = UDim2.new(0.5, -6, 1, 0)
+rightCol.BackgroundTransparency = 1
 
-    local page = Instance.new("ScrollingFrame")
-    page.Name = id
-    page.Parent = content
-    page.Size = UDim2.new(1, 0, 1, 0)
-    page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0
-    page.ScrollBarThickness = 3
-    page.ScrollBarImageColor3 = C.accent
-    page.CanvasSize = UDim2.new(0, 0, 0, 0)
-    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    page.Visible = false
+local rightHeader = Instance.new("TextLabel")
+rightHeader.Parent = rightCol
+rightHeader.BackgroundTransparency = 1
+rightHeader.Position = UDim2.new(0, 4, 0, 0)
+rightHeader.Size = UDim2.new(1, 0, 0, 20)
+rightHeader.Text = "Account Items"
+rightHeader.Font = Enum.Font.GothamBold
+rightHeader.TextSize = 13
+rightHeader.TextColor3 = C.pink
+rightHeader.TextXAlignment = Enum.TextXAlignment.Left
 
-    contentPages[id] = page
-    TABS[id] = {btn = btn, page = page, stroke = stroke}
+local rightList = Instance.new("Frame")
+rightList.Parent = rightCol
+rightList.Position = UDim2.new(0, 0, 0, 26)
+rightList.Size = UDim2.new(1, 0, 1, -26)
+rightList.BackgroundTransparency = 1
+local rightListLayout = Instance.new("UIListLayout", rightList)
+rightListLayout.Padding = UDim.new(0, 6)
+rightListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-    btn.MouseEnter:Connect(function()
-        if activeTab ~= id then btn.BackgroundColor3 = C.cardHover end
-    end)
-    btn.MouseLeave:Connect(function()
-        if activeTab ~= id then btn.BackgroundColor3 = C.card end
-    end)
-    btn.MouseButton1Click:Connect(function()
-        for tid, tdata in pairs(TABS) do
-            tdata.page.Visible = false
-            tdata.btn.BackgroundColor3 = C.card
-            tdata.btn.TextColor3 = C.muted
-            tdata.stroke.Transparency = 1
-        end
-        activeTab = id
-        TABS[id].page.Visible = true
-        TABS[id].btn.BackgroundColor3 = C.cardHover
-        TABS[id].btn.TextColor3 = C.accent
-        TABS[id].stroke.Color = C.accent
-        TABS[id].stroke.Transparency = 0
-    end)
+local function makeItemRow(label, order)
+    local row = Instance.new("Frame")
+    row.Parent = rightList
+    row.LayoutOrder = order
+    row.Size = UDim2.new(1, 0, 0, 28)
+    row.BackgroundColor3 = C.rowBg
+    row.BackgroundTransparency = 0.4
+    row.BorderSizePixel = 0
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+
+    local dot = Instance.new("Frame")
+    dot.Parent = row
+    dot.AnchorPoint = Vector2.new(0, 0.5)
+    dot.Position = UDim2.new(0, 10, 0.5, 0)
+    dot.Size = UDim2.new(0, 10, 0, 10)
+    dot.BackgroundColor3 = C.red
+    dot.BorderSizePixel = 0
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    local nameLbl = Instance.new("TextLabel")
+    nameLbl.Parent = row
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Position = UDim2.new(0, 28, 0, 0)
+    nameLbl.Size = UDim2.new(1, -34, 1, 0)
+    nameLbl.Text = label
+    nameLbl.Font = Enum.Font.GothamBold
+    nameLbl.TextSize = 11
+    nameLbl.TextColor3 = C.text
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    return dot
 end
 
--- [PATCH 2] TELEPORT tab removed
-makeTab("home", "HOME", 1)
-makeTab("settings", "SETTINGS", 2)
+local itemDots = {
+    GodHuman    = makeItemRow("GodHuman", 1),
+    CDK         = makeItemRow("Cursed Dual Katana", 2),
+    Valkyrie    = makeItemRow("Valkyrie Helm", 3),
+    SkullGuitar = makeItemRow("Skull Guitar", 4),
+    MirrorFract = makeItemRow("Mirror Fractal", 5),
+    PullLever   = makeItemRow("Pull Lever", 6),
+}
 
-activeTab = "home"
-TABS.home.page.Visible = true
-TABS.home.btn.BackgroundColor3 = C.cardHover
-TABS.home.btn.TextColor3 = C.accent
-TABS.home.stroke.Color = C.accent
-TABS.home.stroke.Transparency = 0
-
--- ═══════════════════════════════════════════════════════════════
--- HOME TAB
--- ═══════════════════════════════════════════════════════════════
-local homePage = contentPages.home
-local homeLayout = Instance.new("UIListLayout", homePage)
-homeLayout.Padding = UDim.new(0, 10)
-homeLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-local statusCard = makeCard(homePage, UDim2.new(1, -4, 0, 48), UDim2.new(0, 0, 0, 0))
-statusCard.LayoutOrder = 1
-
-local statusDot = Instance.new("Frame")
-statusDot.Parent = statusCard
-statusDot.Position = UDim2.new(0, 14, 0, 19)
-statusDot.Size = UDim2.new(0, 10, 0, 10)
-statusDot.BackgroundColor3 = C.success
-statusDot.BorderSizePixel = 0
-Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
-
-local pulse = Instance.new("ImageLabel")
-pulse.Parent = statusDot
-pulse.AnchorPoint = Vector2.new(0.5, 0.5)
-pulse.Position = UDim2.new(0.5, 0, 0.5, 0)
-pulse.Size = UDim2.new(3, 0, 3, 0)
-pulse.BackgroundTransparency = 1
-pulse.Image = "rbxassetid://5028857084"
-pulse.ImageColor3 = C.success
-pulse.ImageTransparency = 0.5
+local footerBox = Instance.new("Frame")
+footerBox.Parent = panel
+footerBox.Position = UDim2.new(0, 12, 1, -58)
+footerBox.Size = UDim2.new(1, -24, 0, 46)
+footerBox.BackgroundColor3 = C.rowBg
+footerBox.BackgroundTransparency = 0.4
+footerBox.BorderSizePixel = 0
+Instance.new("UICorner", footerBox).CornerRadius = UDim.new(0, 6)
 
 local statusText = Instance.new("TextLabel")
-statusText.Parent = statusCard
+statusText.Parent = footerBox
 statusText.BackgroundTransparency = 1
-statusText.Position = UDim2.new(0, 34, 0, 6)
-statusText.Size = UDim2.new(1, -50, 0, 18)
+statusText.Position = UDim2.new(0, 12, 0, 4)
+statusText.Size = UDim2.new(1, -24, 0, 18)
 statusText.Text = "Idle"
 statusText.Font = Enum.Font.GothamBold
-statusText.TextSize = 12
+statusText.TextSize = 11
 statusText.TextColor3 = C.text
 statusText.TextXAlignment = Enum.TextXAlignment.Left
 statusText.TextTruncate = Enum.TextTruncate.AtEnd
 
 local subStatusText = Instance.new("TextLabel")
-subStatusText.Parent = statusCard
+subStatusText.Parent = footerBox
 subStatusText.BackgroundTransparency = 1
-subStatusText.Position = UDim2.new(0, 34, 0, 24)
-subStatusText.Size = UDim2.new(1, -50, 0, 16)
+subStatusText.Position = UDim2.new(0, 12, 0, 22)
+subStatusText.Size = UDim2.new(1, -24, 0, 18)
 subStatusText.Text = "Waiting..."
 subStatusText.Font = Enum.Font.Gotham
 subStatusText.TextSize = 10
@@ -359,221 +309,9 @@ subStatusText.TextColor3 = C.muted
 subStatusText.TextXAlignment = Enum.TextXAlignment.Left
 subStatusText.TextTruncate = Enum.TextTruncate.AtEnd
 
-EmsUI.StatusLabel = statusText
+EmsUI.StatusLabel    = statusText
 EmsUI.SubStatusLabel = subStatusText
 
-local statsGrid = Instance.new("Frame")
-statsGrid.Parent = homePage
-statsGrid.LayoutOrder = 2
-statsGrid.Size = UDim2.new(1, -4, 0, 180)
-statsGrid.BackgroundTransparency = 1
-local gridLayout = Instance.new("UIGridLayout", statsGrid)
-gridLayout.CellSize = UDim2.new(0.5, -5, 0, 52)
-gridLayout.CellPadding = UDim2.new(0, 10, 0, 10)
-gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-local function makeStatCard(label, initial, color, order)
-    local card = Instance.new("Frame")
-    card.Parent = statsGrid
-    card.LayoutOrder = order
-    card.BackgroundColor3 = C.card
-    card.BorderSizePixel = 0
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke", card)
-    stroke.Color = C.border
-    stroke.Thickness = 1
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Parent = card
-    lbl.BackgroundTransparency = 1
-    lbl.Position = UDim2.new(0, 12, 0, 6)
-    lbl.Size = UDim2.new(1, -24, 0, 14)
-    lbl.Text = label
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 9
-    lbl.TextColor3 = C.muted
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local val = Instance.new("TextLabel")
-    val.Parent = card
-    val.BackgroundTransparency = 1
-    val.Position = UDim2.new(0, 12, 0, 22)
-    val.Size = UDim2.new(1, -24, 0, 22)
-    val.Text = initial
-    val.Font = Enum.Font.GothamBold
-    val.TextSize = 15
-    val.TextColor3 = color
-    val.TextXAlignment = Enum.TextXAlignment.Left
-    val.TextTruncate = Enum.TextTruncate.AtEnd
-    return val
-end
-
-EmsUI.LevelLabel = makeStatCard("LEVEL",    "0",        C.text,  1)
-EmsUI.BeliLabel  = makeStatCard("BELI",     "$0",       C.beli,  2)
-EmsUI.FragLabel  = makeStatCard("FRAGMENT", "[0]",      C.frag,  3)
-EmsUI.RaceLabel  = makeStatCard("RACE",     "Unknown",  C.race,  4)
-EmsUI.MeleeLabel = makeStatCard("MELEE",    "[0]",      C.melee, 5)
-EmsUI.TimerLabel = makeStatCard("UPTIME",   "0h 0m 0s", C.text,  6)
-
-local toggleSection = Instance.new("Frame")
-toggleSection.Parent = homePage
-toggleSection.LayoutOrder = 3
-toggleSection.Size = UDim2.new(1, -4, 0, 0)
-toggleSection.AutomaticSize = Enum.AutomaticSize.Y
-toggleSection.BackgroundTransparency = 1
-local toggleLayout = Instance.new("UIListLayout", toggleSection)
-toggleLayout.Padding = UDim.new(0, 6)
-toggleLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- [PATCH 3] AutoCollect/AutoGacha forced true, toggles removed from UI
-local State = {
-    Noclip = true,
-    AutoCollect = true,
-    AutoGacha = true,
-    AutoKatakuri = false,
-}
-EmsUI.State = State
-
-local function makeToggleRow(label, getter, setter, order)
-    local row = Instance.new("Frame")
-    row.Parent = toggleSection
-    row.LayoutOrder = order
-    row.Size = UDim2.new(1, 0, 0, 40)
-    row.BackgroundColor3 = C.card
-    row.BorderSizePixel = 0
-    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
-    local stroke = Instance.new("UIStroke", row)
-    stroke.Color = C.border
-    stroke.Thickness = 1
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Parent = row
-    lbl.BackgroundTransparency = 1
-    lbl.Position = UDim2.new(0, 14, 0, 0)
-    lbl.Size = UDim2.new(1, -80, 1, 0)
-    lbl.Text = label
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 12
-    lbl.TextColor3 = C.text
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local sw = Instance.new("Frame")
-    sw.Parent = row
-    sw.AnchorPoint = Vector2.new(1, 0.5)
-    sw.Position = UDim2.new(1, -12, 0.5, 0)
-    sw.Size = UDim2.new(0, 38, 0, 20)
-    sw.BackgroundColor3 = Color3.fromRGB(50, 50, 56)
-    sw.BorderSizePixel = 0
-    Instance.new("UICorner", sw).CornerRadius = UDim.new(1, 0)
-
-    local knob = Instance.new("Frame")
-    knob.Parent = sw
-    knob.AnchorPoint = Vector2.new(0, 0.5)
-    knob.Position = UDim2.new(0, 2, 0.5, 0)
-    knob.Size = UDim2.new(0, 16, 0, 16)
-    knob.BackgroundColor3 = Color3.fromRGB(180, 180, 190)
-    knob.BorderSizePixel = 0
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-
-    local function refresh(animate)
-        local on = getter()
-        local kp = on and UDim2.new(1, -18, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
-        local sc = on and C.accent or Color3.fromRGB(50, 50, 56)
-        local kc = on and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 180, 190)
-        if animate then
-            TweenService:Create(knob, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = kp, BackgroundColor3 = kc}):Play()
-            TweenService:Create(sw, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundColor3 = sc}):Play()
-        else
-            knob.Position = kp
-            knob.BackgroundColor3 = kc
-            sw.BackgroundColor3 = sc
-        end
-    end
-    refresh(false)
-
-    local btn = Instance.new("TextButton")
-    btn.Parent = row
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.ZIndex = 5
-    btn.MouseButton1Click:Connect(function()
-        setter(not getter())
-        refresh(true)
-    end)
-
-    row.MouseEnter:Connect(function() row.BackgroundColor3 = C.cardHover end)
-    row.MouseLeave:Connect(function() row.BackgroundColor3 = C.card end)
-end
-
--- [PATCH 3] Only Noclip + Auto Katakuri survive
-makeToggleRow("Noclip",        function() return State.Noclip end,       function(v) State.Noclip = v end, 1)
-makeToggleRow("Auto Katakuri", function() return State.AutoKatakuri end, function(v) State.AutoKatakuri = v end, 2)
-
--- ═══════════════════════════════════════════════════════════════
--- SETTINGS TAB
--- ═══════════════════════════════════════════════════════════════
-local setPage = contentPages.settings
-local setLayout = Instance.new("UIListLayout", setPage)
-setLayout.Padding = UDim.new(0, 10)
-setLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-local infoCard = makeCard(setPage, UDim2.new(1, -4, 0, 90), UDim2.new(0, 0, 0, 0))
-infoCard.LayoutOrder = 1
-
-local infoTitle = Instance.new("TextLabel")
-infoTitle.Parent = infoCard
-infoTitle.BackgroundTransparency = 1
-infoTitle.Position = UDim2.new(0, 14, 0, 10)
-infoTitle.Size = UDim2.new(1, -28, 0, 16)
-infoTitle.Text = "ABOUT"
-infoTitle.Font = Enum.Font.GothamBold
-infoTitle.TextSize = 10
-infoTitle.TextColor3 = C.muted
-infoTitle.TextXAlignment = Enum.TextXAlignment.Left
-
-local infoBody = Instance.new("TextLabel")
-infoBody.Parent = infoCard
-infoBody.BackgroundTransparency = 1
-infoBody.Position = UDim2.new(0, 14, 0, 30)
-infoBody.Size = UDim2.new(1, -28, 0, 50)
-infoBody.Text = "Ems Hub v3.0\nBlox Fruits automation\nRedeem • Farm • Teleport"
-infoBody.Font = Enum.Font.GothamBold
-infoBody.TextSize = 11
-infoBody.TextColor3 = C.text
-infoBody.TextXAlignment = Enum.TextXAlignment.Left
-infoBody.TextYAlignment = Enum.TextYAlignment.Top
-
-local redeemCard = makeCard(setPage, UDim2.new(1, -4, 0, 46), UDim2.new(0, 0, 0, 0))
-redeemCard.LayoutOrder = 2
-
-local rsTitle = Instance.new("TextLabel")
-rsTitle.Parent = redeemCard
-rsTitle.BackgroundTransparency = 1
-rsTitle.Position = UDim2.new(0, 14, 0, 6)
-rsTitle.Size = UDim2.new(1, -28, 0, 14)
-rsTitle.Text = "AUTO REDEEM"
-rsTitle.Font = Enum.Font.GothamBold
-rsTitle.TextSize = 9
-rsTitle.TextColor3 = C.muted
-rsTitle.TextXAlignment = Enum.TextXAlignment.Left
-
-local rsBody = Instance.new("TextLabel")
-rsBody.Parent = redeemCard
-rsBody.BackgroundTransparency = 1
-rsBody.Position = UDim2.new(0, 14, 0, 22)
-rsBody.Size = UDim2.new(1, -28, 0, 18)
-rsBody.Text = "Waiting to start..."
-rsBody.Font = Enum.Font.GothamBold
-rsBody.TextSize = 12
-rsBody.TextColor3 = C.text
-rsBody.TextXAlignment = Enum.TextXAlignment.Left
-rsBody.TextTruncate = Enum.TextTruncate.AtEnd
-EmsUI.RedeemStatus = rsBody
-
--- ═══════════════════════════════════════════════════════════════
--- FLOATING TOGGLE BUTTON
--- ═══════════════════════════════════════════════════════════════
 local floatBtn = Instance.new("TextButton")
 floatBtn.Name = "EmsFloat"
 floatBtn.Parent = gui
@@ -582,7 +320,7 @@ floatBtn.AnchorPoint = Vector2.new(0, 0.5)
 floatBtn.Position = UDim2.new(0, 15, 0.5, -24)
 floatBtn.BackgroundColor3 = C.panel
 floatBtn.Text = "E"
-floatBtn.TextColor3 = C.accent
+floatBtn.TextColor3 = C.purple
 floatBtn.Font = Enum.Font.FredokaOne
 floatBtn.TextSize = 22
 floatBtn.BorderSizePixel = 0
@@ -591,97 +329,61 @@ floatBtn.Active = true
 floatBtn.ZIndex = 100
 Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(1, 0)
 local fbStroke = Instance.new("UIStroke", floatBtn)
-fbStroke.Color = C.accent
+fbStroke.Color = C.border
 fbStroke.Thickness = 1.5
 floatBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
-floatBtn.MouseEnter:Connect(function()
-    TweenService:Create(floatBtn, TweenInfo.new(0.15), {BackgroundColor3 = C.cardHover}):Play()
-end)
-floatBtn.MouseLeave:Connect(function()
-    TweenService:Create(floatBtn, TweenInfo.new(0.15), {BackgroundColor3 = C.panel}):Play()
-end)
 
--- ═══════════════════════════════════════════════════════════════
--- PUBLIC API (PATCHED SetText)
--- ═══════════════════════════════════════════════════════════════
+local _pending = { key = nil, text = nil, dirty = false }
 function EmsUI.SetText(key, text)
-    if text == nil then return end
-    pcall(function()
-        local safeText = tostring(text):gsub("<[^>]->", "")
-        if key == "MainTextLabel" or key == "Task1" or key == "DebugLine" then
-            if statusText and statusText.Parent then statusText.Text = safeText end
-        elseif key == "Task2" then
-            if subStatusText and subStatusText.Parent then subStatusText.Text = safeText end
-        elseif key == "LiveTime" then
-            if EmsUI.TimerLabel and EmsUI.TimerLabel.Parent then
-                EmsUI.TimerLabel.Text = safeText
-            end
-        elseif key == "Melees" then
-            if EmsUI.MeleeLabel and EmsUI.MeleeLabel.Parent then
-                EmsUI.MeleeLabel.Text = "[" .. (safeText:match("%d+") or "0") .. "]"
-            end
-        elseif key == "Currencies" then
-            if statusText and statusText.Parent then statusText.Text = safeText end
-        end
-    end)
+    _pending.key   = key
+    _pending.text  = text
+    _pending.dirty = true
 end
 
-function EmsUI.SetStatus(text)
-    if not text then return end
-    pcall(function()
-        if statusText and statusText.Parent then
-            statusText.Text = tostring(text)
+task.spawn(function()
+    while task.wait(0.05) do
+        if _pending.dirty then
+            local key, text = _pending.key, _pending.text
+            _pending.dirty = false
+            pcall(function()
+                if not text then return end
+                text = tostring(text):gsub("<[^>]->", "")
+                if key == "MainTextLabel" or key == "Task1" or key == "DebugLine" then
+                    statusText.Text = text
+                elseif key == "Task2" then
+                    subStatusText.Text = text
+                elseif key == "LiveTime" then
+                    EmsUI.TimerLabel.Text = text
+                elseif key == "Melees" then
+                    EmsUI.MeleeLabel.Text = text
+                end
+            end)
         end
-    end)
-end
+    end
+end)
 
-function EmsUI.SetSubStatus(text)
-    if not text then return end
-    pcall(function()
-        if subStatusText and subStatusText.Parent then
-            subStatusText.Text = tostring(text)
-        end
-    end)
-end
-
-function EmsUI.SetRedeemStatus(text)
-    if not text then return end
-    pcall(function()
-        if rsBody and rsBody.Parent then
-            rsBody.Text = tostring(text)
-        end
-    end)
-end
-
-function EmsUI.Toggle()
-    panel.Visible = not panel.Visible
-end
+function EmsUI.SetStatus(text)    if text then statusText.Text = tostring(text) end end
+function EmsUI.SetSubStatus(text) if text then subStatusText.Text = tostring(text) end end
+function EmsUI.SetRedeemStatus(_) end
+function EmsUI.Toggle() panel.Visible = not panel.Visible end
 
 function EmsUI.SetStats(data)
     if not data then return end
     pcall(function()
-        if data.Level and EmsUI.LevelLabel and EmsUI.LevelLabel.Parent then
-            EmsUI.LevelLabel.Text = tostring(data.Level)
-        end
-        if data.Beli and EmsUI.BeliLabel and EmsUI.BeliLabel.Parent then
+        if data.Level then EmsUI.LevelLabel.Text = tostring(data.Level) end
+        if data.Beli then
             local b = tonumber(data.Beli) or 0
             local s
-            if b >= 1e9 then s = string.format("$%.2fB", b / 1e9)
-            elseif b >= 1e6 then s = string.format("$%.2fM", b / 1e6)
-            elseif b >= 1e3 then s = string.format("$%.1fK", b / 1e3)
+            if b >= 1e9 then s = string.format("$%.2fB", b/1e9)
+            elseif b >= 1e6 then s = string.format("$%.2fM", b/1e6)
+            elseif b >= 1e3 then s = string.format("$%.1fK", b/1e3)
             else s = "$" .. tostring(b) end
             EmsUI.BeliLabel.Text = s
         end
-        if data.Fragments and EmsUI.FragLabel and EmsUI.FragLabel.Parent then
-            EmsUI.FragLabel.Text = "[" .. tostring(data.Fragments) .. "]"
-        end
-        if data.Race and EmsUI.RaceLabel and EmsUI.RaceLabel.Parent then
-            EmsUI.RaceLabel.Text = tostring(data.Race)
-        end
-        if data.Melee and EmsUI.MeleeLabel and EmsUI.MeleeLabel.Parent then
-            EmsUI.MeleeLabel.Text = "[" .. tostring(data.Melee) .. "]"
-        end
-        if data.Elapsed and EmsUI.TimerLabel and EmsUI.TimerLabel.Parent then
+        if data.Fragments then EmsUI.FragLabel.Text = tostring(data.Fragments) end
+        if data.Race then EmsUI.RaceLabel.Text = tostring(data.Race) end
+        if data.Melee then EmsUI.MeleeLabel.Text = tostring(data.Melee) end
+        if data.Elapsed then
             local h = math.floor(data.Elapsed / 3600)
             local m = math.floor((data.Elapsed % 3600) / 60)
             local s = math.floor(data.Elapsed % 60)
@@ -690,55 +392,62 @@ function EmsUI.SetStats(data)
     end)
 end
 
--- Bind global helpers (used by other modules via Spirit.SetText / _G.SetText)
-_G.EmsUI = EmsUI
-getgenv().EmsUI = EmsUI
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function()
+            local bp = Spirit.ScriptStorage.Backpack
+            local function set(name, owned)
+                local d = itemDots[name]
+                if d and d.Parent then d.BackgroundColor3 = owned and C.green or C.red end
+            end
+            set("GodHuman",    bp["Godhuman"] ~= nil)
+            set("CDK",         bp["Cursed Dual Katana"] ~= nil)
+            set("Valkyrie",    bp["Valkyrie Helm"] ~= nil)
+            set("SkullGuitar", bp["Skull Guitar"] ~= nil)
+            set("MirrorFract", bp["Mirror Fractal"] ~= nil)
+            pcall(function()
+                local ok = Spirit.Remotes.CommF_:InvokeServer("CheckTempleDoor")
+                set("PullLever", ok == true)
+            end)
+        end)
+    end
+end)
 
--- ═══════════════════════════════════════════════════════════════
--- LIVE STATS REFRESH
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     local start = os.time() - (Spirit.OldSessionTime or 0)
     while task.wait(1) do
         pcall(function()
             local Data = LocalPlayer:FindFirstChild("Data")
             if not Data then return end
-
             local level = Data:FindFirstChild("Level") and Data.Level.Value or 0
             local beli  = Data:FindFirstChild("Beli")  and Data.Beli.Value  or 0
             local frag  = Data:FindFirstChild("Fragments") and Data.Fragments.Value or 0
-
             local raceName = "Unknown"
             local raceObj = Data:FindFirstChild("Race")
             if raceObj then
-                if raceObj:IsA("StringValue") then
-                    raceName = raceObj.Value
+                if raceObj:IsA("StringValue") then raceName = raceObj.Value
                 elseif raceObj:IsA("Folder") then
                     local v = raceObj:FindFirstChild("Value")
                     if v then raceName = v.Value end
                 end
             end
-
             local melee = 0
             local sf = Data:FindFirstChild("Stats")
             if sf and sf:FindFirstChild("Melee") then
                 local m = sf.Melee
                 melee = m:FindFirstChild("Level") and m.Level.Value or m.Value or 0
             end
-
             EmsUI.SetStats({
-                Level = level,
-                Beli = beli,
-                Fragments = frag,
-                Race = raceName,
-                Melee = melee,
+                Level = level, Beli = beli, Fragments = frag,
+                Race = raceName, Melee = melee,
                 Elapsed = os.time() - start,
             })
         end)
     end
 end)
 
--- Publish to Spirit so core.SetText wrapper finds us
+_G.EmsUI = EmsUI
+getgenv().EmsUI = EmsUI
 Spirit.EmsUI = EmsUI
 Spirit.__ui_ready = true
 print("[Spirit] ui.lua loaded")
