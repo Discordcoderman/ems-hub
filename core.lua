@@ -1,4 +1,4 @@
--- core.lua — foundation, publishes getgenv().Spirit
+-- core.lua — foundation
 local Spirit = getgenv().Spirit or {}
 getgenv().Spirit = Spirit
 
@@ -269,7 +269,6 @@ function Spirit.RefreshPlayerData()
     end)
 end
 
--- AddPoint — self-gated to fire once per level change
 Spirit._AddPointState = {lastLevel = 0, lastCall = 0}
 
 function Spirit.AddPoint()
@@ -277,24 +276,18 @@ function Spirit.AddPoint()
     if not data then return end
     local pts = data:FindFirstChild("Points")
     if not pts then return end
-
     local points = tonumber(pts.Value) or 0
     if points <= 0 then return end
-
     local lvl = (data:FindFirstChild("Level") and tonumber(data.Level.Value)) or 0
     local state = Spirit._AddPointState
-    if lvl == state.lastLevel and (os.time() - state.lastCall) < 5 then
-        return
-    end
+    if lvl == state.lastLevel and (os.time() - state.lastCall) < 5 then return end
     state.lastLevel = lvl
     state.lastCall  = os.time()
 
     local stats = {}
     pcall(function()
         for _, s in ipairs(data.Stats:GetChildren()) do
-            if s and s:FindFirstChild("Level") then
-                stats[s.Name] = s.Level.Value
-            end
+            if s and s:FindFirstChild("Level") then stats[s.Name] = s.Level.Value end
         end
     end)
 
@@ -309,9 +302,7 @@ function Spirit.AddPoint()
         point = "Sword"
     end
 
-    pcall(function()
-        Remotes.CommF_:InvokeServer("AddPoint", point, points)
-    end)
+    pcall(function() Remotes.CommF_:InvokeServer("AddPoint", point, points) end)
 end
 
 function Spirit.RefreshRace()
@@ -422,9 +413,7 @@ local function RegisterLocalPlayerEventsConnection()
 
     local pts = LocalPlayer.Data:WaitForChild("Points")
     ScriptStorage.Connections.LocalPlayer.PointConnection =
-        pts:GetPropertyChangedSignal("Value"):Connect(function()
-            Spirit.AddPoint()
-        end)
+        pts:GetPropertyChangedSignal("Value"):Connect(function() Spirit.AddPoint() end)
 end
 Spirit.RegisterLocalPlayerEventsConnection = RegisterLocalPlayerEventsConnection
 
@@ -442,55 +431,77 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- TEAM SET — waits for Config, then spams SetTeam for 20s
+-- TEAM SET — force Pirates, retry until player.Team reports it
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
-    local deadline = os.time() + 30
-    while os.time() < deadline do
-        local cfg = Spirit.Config or getgenv().Config
-        if cfg and cfg.Team then break end
-        task.wait(0.1)
-    end
+    -- Force "Pirates" regardless of Config — user asked for pirates only
+    local teamName = "Pirates"
 
-    local cfg = Spirit.Config or getgenv().Config
-    if not cfg or not cfg.Team then
-        Spirit.Report("[team] Config.Team never published — skipping SetTeam")
+    -- Wait for live character
+    local charDeadline = os.time() + 60
+    while os.time() < charDeadline do
+        local hum = Spirit.Humanoid
+        if hum and hum.Health > 0 then break end
+        task.wait(0.25)
+    end
+    if not (Spirit.Humanoid and Spirit.Humanoid.Health > 0) then
+        Spirit.Report("[team] no live Humanoid after 60s — aborting")
         return
     end
-    local teamName = cfg.Team
 
-    if not (Spirit.Humanoid and Spirit.Humanoid.Health > 0) then
-        local charDeadline = os.time() + 60
-        while os.time() < charDeadline do
-            local hum = Spirit.Humanoid
-            if hum and hum.Health > 0 then break end
-            task.wait(0.25)
+    print("[team] forcing → " .. teamName)
+
+    local function currentTeam()
+        local p = LocalPlayer
+        -- Roblox native Team object
+        local ok, tm = pcall(function() return p.Team end)
+        if ok and tm then
+            if typeof(tm) == "Instance" then return tm.Name end
+            return tostring(tm)
         end
+        -- Data folder StringValue
+        local ok2, val = pcall(function()
+            local d = p:FindFirstChild("Data")
+            if d then
+                local t = d:FindFirstChild("Team")
+                if t and t:IsA("StringValue") then return t.Value end
+            end
+        end)
+        if ok2 and val then return tostring(val) end
+        -- Player attribute
+        local ok3, attr = pcall(function() return p:GetAttribute("Team") end)
+        if ok3 and attr then return tostring(attr) end
+        return nil
     end
 
-    if not (Spirit.Humanoid and Spirit.Humanoid.Health > 0) then
-        Spirit.Report("[team] no live Humanoid after 60s — aborting SetTeam")
-        return
-    end
+    local endTime = os.time() + 30
+    local lastReport = 0
+    local callsFired = 0
 
-    print("[Spirit] Setting team → " .. tostring(teamName))
-
-    local endTime = os.time() + 20
-    local logsRemaining = 5
     while os.time() < endTime do
         local ok, result = pcall(function()
             return game.ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", teamName)
         end)
-        if logsRemaining > 0 then
-            print(("[Spirit] SetTeam → %s | ok=%s result=%s"):format(
-                tostring(teamName), tostring(ok), tostring(result)))
-            logsRemaining = logsRemaining - 1
+        callsFired = callsFired + 1
+
+        -- Report every 3s
+        if os.time() - lastReport >= 3 then
+            lastReport = os.time()
+            local cur = currentTeam()
+            print(("[team] fired=%d | current=%s | ok=%s result=%s")
+                :format(callsFired, tostring(cur), tostring(ok), tostring(result)))
+            if cur and string.lower(cur) == string.lower(teamName) then
+                print("[team] confirmed on " .. cur)
+                Spirit.SetTask("SubTask", "Team: " .. cur)
+                return
+            end
         end
-        task.wait(0.5)
+
+        task.wait(0.3)
     end
 
-    Spirit.SetTask("SubTask", "Team: " .. tostring(teamName))
-    print("[Spirit] SetTeam loop finished")
+    Spirit.SetTask("SubTask", "Team: " .. teamName)
+    print("[team] loop ended — if not on Pirates, check console for result values")
 end)
 
 task.spawn(function()
