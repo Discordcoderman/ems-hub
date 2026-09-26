@@ -1,4 +1,8 @@
--- tween.lua — TweenController with descendant-wide noclip
+-- tween.lua — TweenController with permanent noclip + 180 studs/s
+-- The character's BaseParts stay CanCollide = false at all times.
+-- That's what lets the Saber Expert fight happen through walls —
+-- toggling collision back on when the tween finishes was cancelling
+-- the noclip mid-fight.
 local Spirit = getgenv().Spirit
 if not Spirit then error("[tween] core.lua not loaded") end
 
@@ -27,23 +31,35 @@ Spirit.TweenInstance  = nil
 Spirit.TweenInstance2 = nil
 Spirit.TweenDestination = nil
 
-local noclipActive = false
-
--- Noclip EVERY BasePart in the character (descendants too — hats,
--- accessories, tools) so WaterBase and other terrain can't block.
-local function setCharacterCollision(state)
-    local char = LocalPlayer.Character
+-- ═══════════════════════════════════════════════════════════════
+-- PERMANENT NOCLIP
+-- Every frame, every BasePart on the character (including
+-- accessories, tools, hair) gets CanCollide = false. No toggle — the
+-- old behavior of restoring CanCollide = true when idle was what
+-- blocked the character at Saber Expert's doorway.
+-- ═══════════════════════════════════════════════════════════════
+local function clearCollision(char)
     if not char then return end
     for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = state
+        if part:IsA("BasePart") and part.CanCollide then
+            part.CanCollide = false
         end
     end
 end
-Spirit.SetCharacterCollision = setCharacterCollision
+Spirit.SetCharacterCollision = function(_) end  -- kept for API compat
 
--- Strip collision from water parts once, globally, so nothing can
--- ever stick on them.
+task.spawn(function()
+    while task.wait(0.1) do
+        pcall(clearCollision, LocalPlayer.Character)
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    task.wait(0.2)
+    clearCollision(char)
+end)
+
+-- Also nuke collision on water surfaces — carried over from previous.
 task.spawn(function()
     while task.wait(5) do
         pcall(function()
@@ -62,34 +78,14 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while task.wait() do
-        local shouldNoclip = false
-        if block and block.Parent == Workspace and Spirit.shouldTween then
-            shouldNoclip = true
-        end
-        if shouldNoclip then
-            if not noclipActive then
-                noclipActive = true
-                setCharacterCollision(false)
-            end
-        else
-            if noclipActive then
-                noclipActive = false
-                setCharacterCollision(true)
-            end
-        end
-        getgenv().OnFarm = shouldNoclip
-    end
-end)
-
+-- Character follows the block during tween.
 task.spawn(function()
     local lp = LocalPlayer
     repeat task.wait() until lp.Character and lp.Character.PrimaryPart
     block.CFrame = lp.Character.PrimaryPart.CFrame
     while task.wait() do
         pcall(function()
-            if getgenv().OnFarm then
+            if Spirit.shouldTween then
                 if block and block.Parent == Workspace then
                     local char = lp.Character
                     local primary = char and char.PrimaryPart
@@ -189,7 +185,6 @@ function TweenController.Create(target)
         return
     end
 
-    -- Skip if we're already tweening to ~this same spot
     if Spirit.TweenInstance
        and Spirit.TweenInstance.PlaybackState == Enum.PlaybackState.Playing
        and Spirit.TweenDestination
@@ -245,8 +240,8 @@ function TweenController.Create(target)
         return
     end
 
-    -- 165 studs/sec = fast enough to reach fruits before they despawn
-    local duration = dist / 165
+    -- 180 studs/sec
+    local duration = dist / 180
 
     Spirit.shouldTween = true
     Spirit.TweenDestination = destCF
@@ -271,4 +266,4 @@ function TweenController.Create(target)
 end
 
 Spirit.__tween_ready = true
-print("[Spirit] tween.lua loaded")
+print("[Spirit] tween.lua loaded — permanent noclip active")
