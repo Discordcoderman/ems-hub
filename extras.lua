@@ -1,4 +1,4 @@
--- extras.lua — Redeem, no-anim, auto-gacha, auto-collect, VOid attack
+-- extras.lua — Redeem, no-anim, auto-gacha, auto-collect fruits, VOid attack
 local Spirit = getgenv().Spirit
 if not Spirit then error("[extras] core.lua not loaded") end
 
@@ -12,7 +12,7 @@ if Spirit.Config then
     if E.AutoGachaFruit   == nil then E.AutoGachaFruit   = false end
     if E.GachaMinBeli     == nil then E.GachaMinBeli     = 100000 end
     if E.AutoCollectFruit == nil then E.AutoCollectFruit = true end
-    if E.CollectInterval  == nil then E.CollectInterval  = 10 end
+    if E.CollectInterval  == nil then E.CollectInterval  = 60 end
 end
 
 task.spawn(function()
@@ -51,7 +51,6 @@ task.spawn(function()
     while task.wait(5) do pcall(disable, LocalPlayer.Character) end
 end)
 
--- Auto Gacha (opt-in)
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
     repeat task.wait(2) until LocalPlayer:FindFirstChild("Data")
@@ -66,11 +65,11 @@ task.spawn(function()
     end
     local function gachaCall(ctx)
         local rf = getGacha()
-        if not rf then return false, "no remote" end
+        if not rf then return false end
         local ok, result = pcall(function()
             return rf:InvokeServer({ SpokeNPC = "Blox Fruit Gacha", Context = ctx, BoxName = "ZiolesGacha" })
         end)
-        if not ok then return false, tostring(result) end
+        if not ok then return false end
         return true, result
     end
     local nextAttempt = os.time()
@@ -98,7 +97,9 @@ task.spawn(function()
     end
 end)
 
--- Auto Collect Fruits (combat-aware, interval-driven)
+-- ═══════════════════════════════════════════════════════════════
+-- Auto Collect Fruits — every 60s
+-- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(2) until Spirit.Config and Spirit.Config.Extras
 
@@ -106,9 +107,11 @@ task.spawn(function()
         if not obj or not obj.Parent then return false end
         if obj:IsA("Tool") then return false end
         if not (obj:IsA("Model") or obj:IsA("BasePart")) then return false end
+        local name = tostring(obj.Name)
+        if name:match("%[.-%]%s*Fruit") then return true end
+        if name:find("Fruit", 1, true) then return true end
         local origName = obj:GetAttribute("OriginalName")
         if origName and tostring(origName):find("Fruit") then return true end
-        if tostring(obj.Name):find("Fruit") then return true end
         return false
     end
 
@@ -145,17 +148,11 @@ task.spawn(function()
         return true
     end
 
-    while task.wait(Spirit.Config.Extras.CollectInterval or 10) do
+    while task.wait(Spirit.Config.Extras.CollectInterval or 60) do
         pcall(function()
             local E = Spirit.Config and Spirit.Config.Extras
             if not E or not E.AutoCollectFruit then return end
 
-            -- Skip if actively fighting (FastAttack in last 3s)
-            if _G.FastAttack and (os.time() - _G.FastAttack) < 3 then return end
-            local sub = Spirit.ScriptStorage.Task and Spirit.ScriptStorage.Task.SubTask
-            if sub and (tostring(sub):find("Attack") or tostring(sub):find("attack")) then return end
-
-            -- Skip if a live enemy is within 60 studs
             local nearbyEnemy = false
             local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if hrp then
@@ -189,7 +186,6 @@ task.spawn(function()
     end
 end)
 
--- VOid ATTACK
 do
     local RS = ReplicatedStorage
     local Net = RS:WaitForChild("Modules"):WaitForChild("Net")
