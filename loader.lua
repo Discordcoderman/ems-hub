@@ -15,30 +15,14 @@ local TEAM = "Pirates"
 --   → utility → sea → extras → main
 local MODULES = {
     "core.lua",
-    "gacha.lua",          -- boot roll fires first, before anything else
-    "data.lua",
-    "ui.lua",
-    "tween.lua",
-    "combat.lua",
-    "quests.lua",
-    "tasks.lua",
-    "level_farm.lua",
-    "player.lua",
-    "level_gates.lua",    -- Ken @ 300, Second Sea @ 700
-    "mele.lua",
-    "bosses.lua",
-    "sword_bosses.lua",
-    "cake_prince.lua",
-    "raids.lua",
-    "swords_quests.lua",
-    "race.lua",
-    "soul_guitar.lua",
-    "utility.lua",
-    "sea.lua",
-    "extras.lua",
-    "main.lua",
+    "gacha.lua",
+    "data.lua","ui.lua","tween.lua","combat.lua","quests.lua",
+    "tasks.lua","level_farm.lua","player.lua","level_gates.lua","mele.lua",
+    "sea2_quest.lua",     -- ← new: full Ice Admiral chain
+    "bosses.lua","sword_bosses.lua","cake_prince.lua","raids.lua",
+    "swords_quests.lua","race.lua","soul_guitar.lua","utility.lua",
+    "sea.lua","extras.lua","main.lua",
 }
-
 local env = getgenv()
 
 -- ═══════════════════════════════════════════════════════════════
