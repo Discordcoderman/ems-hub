@@ -400,7 +400,11 @@ local function RegisterLocalPlayerEventsConnection()
         pcall(function() c:Disconnect() end)
     end
 
-    if not Spirit.Character then
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    bindCharacter(char)
+
+    local hum = Spirit.Humanoid or char:WaitForChild("Humanoid", 30)
+    if not hum then
         local conn
         conn = LocalPlayer.CharacterAdded:Connect(function()
             if conn then conn:Disconnect() end
@@ -413,11 +417,11 @@ local function RegisterLocalPlayerEventsConnection()
     LocalPlayer:SetAttribute("IsAvailable", true)
 
     ScriptStorage.Connections.LocalPlayer.HealthCheck =
-        Spirit.Humanoid:GetPropertyChangedSignal("Health"):Connect(function()
-            LocalPlayer:SetAttribute("IsAvailable", Spirit.Humanoid.Health > 10)
+        hum:GetPropertyChangedSignal("Health"):Connect(function()
+            LocalPlayer:SetAttribute("IsAvailable", hum.Health > 10)
         end)
 
-    ScriptStorage.Connections.LocalPlayer.Melee = Spirit.Character.ChildAdded:Connect(MeleeCheck)
+    ScriptStorage.Connections.LocalPlayer.Melee = char.ChildAdded:Connect(MeleeCheck)
     local bp = LocalPlayer:WaitForChild("Backpack")
     ScriptStorage.Connections.LocalPlayer.Fruit = bp.ChildAdded:Connect(MeleeCheck)
     for _, c in ipairs(bp:GetChildren()) do MeleeCheck(c) end
