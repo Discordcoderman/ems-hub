@@ -3,12 +3,12 @@ local Spirit = getgenv().Spirit
 if not Spirit then error("[raid] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[raid] tasks.lua not loaded") end
 
-local Services      = Spirit.Services
+local Services          = Spirit.Services
 local ReplicatedStorage = Services.ReplicatedStorage
-local LocalPlayer   = Spirit.LocalPlayer
-local ScriptStorage = Spirit.ScriptStorage
-local Remotes       = Spirit.Remotes
-local SetTask       = Spirit.SetTask
+local LocalPlayer       = Spirit.LocalPlayer
+local ScriptStorage     = Spirit.ScriptStorage
+local Remotes           = Spirit.Remotes
+local SetTask           = Spirit.SetTask
 
 -- ═══════════════════════════════════════════════════════════════
 -- RaidController
@@ -71,6 +71,15 @@ RC:RegisterMethod("GetCurrentRaidIsland", function()
 end)
 
 RC:RegisterMethod("Refresh", function()
+    -- ── Melee raid hook ──
+    -- MeleesController sets _G.MeleeRaidRequest = true when a raid-
+    -- gated melee needs more clears. Bypass all level/fragment gates.
+    if _G.MeleeRaidRequest then
+        local island = RC.Methods.GetCurrentRaidIsland:Call()
+        if island then return island end
+        return true   -- no island yet → Start runs the summon chain
+    end
+
     local lv = ScriptStorage.PlayerData.Level or 0
     if lv < 1300 then return nil end
     if Spirit.CheckSpecialMicrochip() then return nil end
@@ -186,6 +195,8 @@ ARI:RegisterMethod("BuyChip", function()
 end)
 
 ARI:RegisterMethod("Refresh", function()
+    -- Yield to the melee raid hook — never compete with a forced raid.
+    if _G.MeleeRaidRequest then return nil end
     local lv = ScriptStorage.PlayerData.Level or 0
     local fr = ScriptStorage.PlayerData.Fragments or 0
     local target = (Spirit.Config and Spirit.Config.AutoRaidIce_TargetFragments) or 5000
