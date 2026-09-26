@@ -1,7 +1,7 @@
--- utilly.lua
+-- utility.lua — Trevor, PirateRaid, CollectDrops (fruit priority), stubs
 local Spirit = getgenv().Spirit
-if not Spirit then error("[utilly] core.lua not loaded") end
-if not Spirit.FunctionsHandler then error("[utilly] tasks.lua not loaded") end
+if not Spirit then error("[utility] core.lua not loaded") end
+if not Spirit.FunctionsHandler then error("[utility] tasks.lua not loaded") end
 
 local Services      = Spirit.Services
 local ReplicatedStorage = Services.ReplicatedStorage
@@ -77,51 +77,97 @@ PR:RegisterMethod("Start", function()
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- COLLECT DROPS
+-- COLLECT DROPS — fruit priority (top of TasksOrder)
+-- Only collects models that contain a "FruitAnimator" child, which
+-- is the reliable marker for a spawned collectible fruit.
 -- ═══════════════════════════════════════════════════════════════
 local CD = Spirit.FunctionsHandler.CollectDrops
 
+local function isFruitModel(obj)
+    if not obj or not obj.Parent then return false end
+    if not obj:IsA("Model") then return false end
+    return obj:FindFirstChild("FruitAnimator") ~= nil
+end
+
+local lastScan = 0
+local cachedFruit = nil
+
 CD:RegisterMethod("Refresh", function()
-    for _, obj in ipairs(workspace:GetChildren()) do
-        if string.find(obj.Name, "Fruit") and obj:FindFirstChild("Handle") then
-            if not ScriptStorage.Backpack[Spirit.FruitNameToId(obj.Name)] then
-                CD:Set("CurrentProgressLevel", obj)
-                return obj
-            end
+    -- Cache scan for 5s so the dispatcher doesn't hammer workspace every tick
+    if os.time() - lastScan < 5 then
+        return cachedFruit
+    end
+    lastScan = os.time()
+    cachedFruit = nil
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if isFruitModel(obj) then
+            cachedFruit = obj
+            return cachedFruit
         end
     end
+    return nil
 end)
 
-CD:RegisterMethod("Start", function()
-    local obj = CD:Get("CurrentProgressLevel")
-    CD:Set("CurrentProgressLevel", nil)
-    if obj then
-        SetTask("MainTask", "Collecting " .. tostring(obj))
-        Spirit.TweenController.Create(obj:GetModelCFrame())
+CD:RegisterMethod("Start", function(fruit)
+    if not fruit or not fruit.Parent then return end
+
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local target = fruit:FindFirstChild("Handle")
+                or fruit.PrimaryPart
+                or fruit:FindFirstChildWhichIsA("BasePart")
+    if not target or not target.Position then return end
+
+    print("[fruit] collecting " .. fruit.Name .. " at " .. tostring(target.Position))
+    SetTask("MainTask", "Collecting fruit: " .. fruit.Name)
+
+    Spirit.TweenController.Create(CFrame.new(target.Position + Vector3.new(0, 3, 0)))
+    task.wait(0.7)
+
+    -- Touch interest
+    pcall(function()
+        if firetouchinterest then
+            firetouchinterest(hrp, target, 0)
+            task.wait()
+            firetouchinterest(hrp, target, 1)
+        end
+    end)
+
+    task.wait(0.5)
+
+    -- Fall back to StoreFruit if the fruit is still around
+    if fruit.Parent then
+        local name = fruit:GetAttribute("OriginalName")
+                   or (fruit:FindFirstChild("OriginalName") and fruit.OriginalName.Value)
+                   or fruit.Name
+        pcall(function()
+            Remotes.CommF_:InvokeServer("StoreFruit", name, fruit)
+        end)
     end
+
+    -- Invalidate cache so next Refresh scans fresh
+    lastScan = 0
+    cachedFruit = nil
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- SecondSeaPuzzle (stub, port full body if needed)
+-- Stubs (unused features that need registered slots)
 -- ═══════════════════════════════════════════════════════════════
 local SSP = Spirit.FunctionsHandler.SecondSeaPuzzle
 SSP:RegisterMethod("Refresh", function() return nil end)
 SSP:RegisterMethod("Start", function() end)
 
--- ═══════════════════════════════════════════════════════════════
--- ColosseumPuzzle / ThirdSeaPuzzle — stubs
--- ═══════════════════════════════════════════════════════════════
-for _, name in ipairs({"ColosseumPuzzle", "ThirdSeaPuzzle", "CollectBerries", "ExpRedeem"}) do
+for _, name in ipairs({"ColosseumPuzzle","ThirdSeaPuzzle","CollectBerries","ExpRedeem"}) do
     local H = Spirit.FunctionsHandler[name]
     H:RegisterMethod("Refresh", function() return nil end)
     H:RegisterMethod("Start", function() end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- UTILLY ITEMS ACTIVATION (stub — full port if needed)
--- ═══════════════════════════════════════════════════════════════
 local UI = Spirit.FunctionsHandler.UtillyItemsActivitation
 UI:RegisterMethod("Refresh", function() return nil end)
 UI:RegisterMethod("Start", function() end)
 
-print("[Spirit] utilly.lua loaded")
+print("[Spirit] utility.lua loaded")
