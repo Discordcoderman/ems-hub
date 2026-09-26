@@ -1,7 +1,4 @@
--- main.lua
--- Startup side effects + main tick loop. Loads LAST.
--- Depends on: every task module having already registered its Refresh/Start.
-
+-- main.lua — startup side effects + main tick loop
 local Spirit = getgenv().Spirit
 if not Spirit then error("[main] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[main] tasks.lua not loaded") end
@@ -15,9 +12,6 @@ local ScriptStorage = Spirit.ScriptStorage
 local SetTask       = Spirit.SetTask
 local SetText       = Spirit.SetText
 
--- ═══════════════════════════════════════════════════════════════
--- NOTIFICATION LISTENERS
--- ═══════════════════════════════════════════════════════════════
 local Notify = {Listeners = {}}
 Spirit.TorchEnabledTime = 0
 Spirit.DoneCdkTick = 0
@@ -46,8 +40,6 @@ RegisterNotify("elite", function()
 end)
 
 RegisterNotify("quest completed", function()
-    -- Reset the remote-driven state so level_farm doesn't think the old
-    -- quest is still active if it's reading GetActiveQuestName() as a fallback.
     pcall(function()
         if Spirit.QuestController and Spirit.QuestController.Reset then
             Spirit.QuestController:Reset()
@@ -69,7 +61,6 @@ RegisterNotify("job", function()
     end
 end)
 
--- capability-safe hook — delete this whole block if your executor rejects hookfunction
 pcall(function()
     local orig = require(ReplicatedStorage.Notification).new
     local hooked
@@ -81,12 +72,7 @@ pcall(function()
     end)
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- QUEST SAFETY NET
--- If the GUI has no active quest for 5 straight seconds but
--- QuestController still claims there is one, force a reset so
--- LevelFarm can accept a fresh quest.
--- ═══════════════════════════════════════════════════════════════
+-- Quest safety net
 task.spawn(function()
     local emptyStreak = 0
     while task.wait(1) do
@@ -106,9 +92,6 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- FPS BOOST
--- ═══════════════════════════════════════════════════════════════
 local GRAYABLE = {
     BasePart = true, MeshPart = true, UnionOperation = true,
     Decal = true, Texture = true, ParticleEmitter = true,
@@ -149,17 +132,11 @@ if Spirit.Config and Spirit.Config.Configuration and Spirit.Config.Configuration
     end)
 end
 
--- ═══════════════════════════════════════════════════════════════
--- IDLE KICK PREVENTION
--- ═══════════════════════════════════════════════════════════════
 LocalPlayer.Idled:Connect(function()
     Services.VirtualUser:CaptureController()
     Services.VirtualUser:ClickButton2(Vector2.new())
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- STARTUP SIDE EFFECTS
--- ═══════════════════════════════════════════════════════════════
 SetTask("MainTask", "Level Farming")
 SetTask("SubTask", "Idle")
 
@@ -179,7 +156,6 @@ end)
 
 pcall(function() Remotes.CommF_:InvokeServer("Cousin", "Buy") end)
 
--- Idle timer writer (feeds UI's UPTIME row)
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -193,7 +169,6 @@ task.spawn(function()
     end
 end)
 
--- Auto-hop delay
 task.spawn(function()
     local delay = (Spirit.Config and Spirit.Config.Configuration
                    and Spirit.Config.Configuration.AutoHopDelay) or 3600
@@ -204,16 +179,12 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- MAIN LOOP
--- ═══════════════════════════════════════════════════════════════
 SetText("MainTextLabel", "Loaded — waiting for player data...")
 Spirit.LastIdling = os.time()
 
 print("[Spirit] main.lua loaded — entering main loop")
 
 while task.wait() do
-    -- Idle-hop check
     if Spirit.Config and Spirit.Config.Configuration
        and Spirit.Config.Configuration.HopWhenIdle
        and Spirit.LastIdling
@@ -223,7 +194,6 @@ while task.wait() do
         game:GetService("TeleportService"):Teleport(game.PlaceId)
     end
 
-    -- Feed the dispatcher once PlayerData.Level is populated
     if ScriptStorage.PlayerData.Level and ScriptStorage.PlayerData.Level > 0 then
         local ok, err = xpcall(Spirit.RefreshTasksData, debug.traceback)
         if not ok then
