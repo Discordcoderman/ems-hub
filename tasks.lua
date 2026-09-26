@@ -98,15 +98,11 @@ for _, taskName in ipairs(TASKS_TO_REGISTER) do
 end
 
 -- ═══════════════════════════════════════════════════════════════
--- TASK ORDER — first match wins.
--- Saber is #1. At level 200+, until Saber is in the backpack, it
--- claims every dispatcher tick — overriding level farming, melee
--- buying, fruit collection, and every other task. Once Saber is
--- owned, Saber.Refresh returns nil and everything below resumes.
+-- TASK ORDER — Saber first, then melee, then fruit, then bosses,
+-- raids, level farm, side quests.
 -- ═══════════════════════════════════════════════════════════════
 Spirit.TasksOrder = {
-    "Saber",                 -- absolute top — level 200 one-shot
-
+    "Saber",
     "MeleesController",
     "CollectDrops",
 
@@ -129,8 +125,8 @@ Spirit.ParsingTimes = ParsingTimes
 local warnedTasks = {}
 Spirit.CurrentTask = nil
 
--- Fruit-priority short-circuit stays above everything so a committed
--- fruit tween never gets cancelled by Saber routing or anything else.
+-- Fruit-priority short-circuit: while a fruit tween is committed,
+-- only CollectDrops gets the dispatcher.
 local function runFruitPriority()
     if not _G.FruitPriorityActive then return false end
     local cd = FunctionsHandler.CollectDrops
@@ -152,6 +148,9 @@ end
 function Spirit.RefreshTasksData()
     if _G.Stop then return end
     if _G.SeaTransitionActive then return end
+    -- Sky teleport yields every task — no tween can fight the server
+    -- move while this is set. Cleared by level_farm's task.delay.
+    if _G.SkyTransitionActive then return end
 
     if runFruitPriority() then return end
 
