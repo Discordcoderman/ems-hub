@@ -7,7 +7,6 @@ local Workspace     = Services.Workspace
 local LocalPlayer   = Spirit.LocalPlayer
 local ScriptStorage = Spirit.ScriptStorage
 
--- ═══ invisible block ═══
 do
     local existing = Workspace:FindFirstChild("Rip_Indra")
     if existing then existing:Destroy() end
@@ -27,16 +26,47 @@ Spirit.TweenDebounce  = false
 Spirit.TweenInstance  = nil
 Spirit.TweenInstance2 = nil
 
+-- Noclip state tracking — only toggle collision on state change, never per-tick.
+local noclipActive = false
+
+local function setCharacterCollision(state)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = state
+        end
+    end
+end
+Spirit.SetCharacterCollision = setCharacterCollision
+
+-- OnFarm watcher — also drives noclip toggling
 task.spawn(function()
     while task.wait() do
-        if block and block.Parent == Workspace then
-            getgenv().OnFarm = Spirit.shouldTween and true or false
-        else
-            getgenv().OnFarm = false
+        local shouldNoclip = false
+
+        if block and block.Parent == Workspace and Spirit.shouldTween then
+            shouldNoclip = true
         end
+
+        -- Sync block to character when active
+        if shouldNoclip then
+            if not noclipActive then
+                noclipActive = true
+                setCharacterCollision(false)
+            end
+        else
+            if noclipActive then
+                noclipActive = false
+                setCharacterCollision(true)
+            end
+        end
+
+        getgenv().OnFarm = shouldNoclip
     end
 end)
 
+-- Character ↔ block sync
 task.spawn(function()
     local lp = LocalPlayer
     repeat task.wait() until lp.Character and lp.Character.PrimaryPart
@@ -54,25 +84,12 @@ task.spawn(function()
                         if primary then block.CFrame = primary.CFrame end
                     end
                 end
-                local char = lp.Character
-                if char then
-                    for _, e in pairs(char:GetChildren()) do
-                        if e:IsA("BasePart") then e.CanCollide = false end
-                    end
-                end
-            else
-                local char = lp.Character
-                if char then
-                    for _, e in pairs(char:GetChildren()) do
-                        if e:IsA("BasePart") then e.CanCollide = true end
-                    end
-                end
             end
         end)
     end
 end)
 
--- ═══ Home-point cache ═══
+-- Home points
 local HomePoints = {}
 pcall(function()
     for _, v in ipairs(Spirit.Services.ReplicatedStorage.NPCs:GetChildren()) do
@@ -83,31 +100,25 @@ pcall(function()
 end)
 Spirit.HomePoints = HomePoints
 
--- ═══ GetPortal — the crash was here ═══
+-- Portal lookup
 local portalCooldown = 0
 local function GetPortal(target)
     if tick() - portalCooldown < 2 then return nil end
     portalCooldown = tick()
-
     if not target then return nil end
 
-    -- target may be CFrame or Vector3; normalize to Vector3
     local targetPos
-    if typeof(target) == "CFrame" then
-        targetPos = target.Position
-    elseif typeof(target) == "Vector3" then
-        targetPos = target
-    else
-        return nil
-    end
+    if typeof(target) == "CFrame" then targetPos = target.Position
+    elseif typeof(target) == "Vector3" then targetPos = target
+    else return nil end
 
     local portals = Spirit.Portals or {}
     if #portals == 0 then return nil end
 
     local distanceToTarget = Spirit.CaculateDistance(targetPos)
     local threshold = distanceToTarget - 300
+    local best, bestDist = nil, 9e9
 
-    local best, bestDist = nil, 9e9   -- FIXED: best = nil, bestDist = math.huge-ish
     for _, p in ipairs(portals) do
         local d = Spirit.CaculateDistance(p, targetPos)
         if d < threshold and d < bestDist then
@@ -135,22 +146,15 @@ local function GetEntries(target)
             best = p
         end
     end
-    if best then
-        if os.time() - 0 > 30 then
-            for _ = 1, 10 do task.wait() end
-        end
-    end
 end
 Spirit.GetEntries = GetEntries
 
--- ═══ Hover position ═══
 function Spirit.HoverOver(a, height)
     height = height or 35
-    local base = Vector3.new(a.X, a.Y, a.Z)
-    return CFrame.new(base + Vector3.new(0, height, 0))
+    return CFrame.new(Vector3.new(a.X, a.Y, a.Z) + Vector3.new(0, height, 0))
 end
 
--- ═══ TweenController ═══
+-- TweenController
 local TweenController = {}
 Spirit.TweenController = TweenController
 
@@ -200,10 +204,7 @@ function TweenController.Create(target)
     local hrp = character and character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = false end
-    end
-
+    -- Anti-fall body velocity on the head (only holds vertical)
     local head = character:WaitForChild("Head")
     if not head:FindFirstChild("eltrul") then
         local bv = Instance.new("BodyVelocity")
@@ -213,7 +214,6 @@ function TweenController.Create(target)
         bv.Parent = head
     end
 
-    -- Cross-sea portal request (only when destination is far away)
     local distToDest = Spirit.CaculateDistance(destCF)
     if distToDest > 500 then
         if Spirit.SeaIndex == 3 and not ScriptStorage.Backpack["Valkyrie Helm"] then
@@ -223,7 +223,6 @@ function TweenController.Create(target)
         end
     end
 
-    -- Submerged island gateway
     if Spirit.SeaIndex == 3
        and Spirit.CaculateDistance(Vector3.new(11256, -2138, 9888), destCF)
            < (Spirit.CaculateDistance(destCF) - 700) then
@@ -246,8 +245,7 @@ function TweenController.Create(target)
         return
     end
 
-    local divisor = 160
-    local duration = dist / divisor
+    local duration = dist / 160
 
     Spirit.shouldTween = true
     Spirit.TweenInstance = Services.TweenService:Create(
