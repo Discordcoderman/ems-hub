@@ -16,9 +16,7 @@ LPC:RegisterMethod("EquipTool", function(toolName)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
     for _, v in ipairs(char:GetChildren()) do
-        if v:IsA("Tool") and (v.Name == tostring(toolName) or v.ToolTip == toolName) then
-            return
-        end
+        if v:IsA("Tool") and (v.Name == tostring(toolName) or v.ToolTip == toolName) then return end
     end
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if not bp then return end
@@ -44,9 +42,6 @@ end)
 
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
--- ═══════════════════════════════════════════════════════════════
--- ABILITY BUYER — Geppo, Buso, Ken, Soru
--- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
     repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
@@ -70,13 +65,11 @@ task.spawn(function()
                 if ok then bought.Geppo = true end
                 task.wait(1)
             end
-
             if not bought.Soru then
                 local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
                 if ok then bought.Soru = true end
                 task.wait(1)
             end
-
             if lv >= 100 then
                 if not bought.Buso and not hasTag("Buso") then
                     SetTask("SubTask", "Buying Buso Haki...")
@@ -84,7 +77,6 @@ task.spawn(function()
                     if ok then bought.Buso = true end
                     task.wait(1)
                 end
-
                 if not bought.Ken and not hasTag("Ken") then
                     SetTask("SubTask", "Buying Observation Haki...")
                     local ok = pcall(function() return Remotes.CommF_:InvokeServer("KenTalk", "Buy") end)
@@ -92,7 +84,6 @@ task.spawn(function()
                     task.wait(1)
                 end
             end
-
             if bought.Geppo and bought.Soru and bought.Buso and bought.Ken then
                 while task.wait(60) do end
             end
@@ -100,11 +91,7 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO AURA — keep Buso Haki active
--- Fires the Buso remote whenever the character isn't holding the
--- HasBuso marker (it clears on death, aura toggle-off, server resync).
--- ═══════════════════════════════════════════════════════════════
+-- Auto-aura: keep Buso Haki on
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
@@ -112,17 +99,13 @@ task.spawn(function()
             if not char then return end
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not hum or hum.Health <= 0 then return end
-            -- Already on
             if char:FindFirstChild("HasBuso") then return end
-            -- Fire the Buso remote — server toggles aura on
             Remotes.CommF_:InvokeServer("Buso")
         end)
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO KEN — keep Observation Haki active
--- ═══════════════════════════════════════════════════════════════
+-- Auto-ken
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
