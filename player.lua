@@ -1,4 +1,7 @@
--- player.lua — LocalPlayerController + ability buyer + auto-aura + auto-ken
+-- player.lua — LocalPlayerController + ability flow + auto-aura/auto-ken
+-- Ability rules:
+--   Level 70  → Buso Haki (aura) + Soru (flash step)
+--   Level 700 → Ken (only when Beli >= KEN_COST)
 local Spirit = getgenv().Spirit
 if not Spirit then error("[player] core.lua not loaded") end
 if not Spirit.FunctionsHandler then error("[player] tasks.lua not loaded") end
@@ -7,6 +10,9 @@ local LocalPlayer   = Spirit.LocalPlayer
 local Remotes       = Spirit.Remotes
 local ScriptStorage = Spirit.ScriptStorage
 local SetTask       = Spirit.SetTask
+
+local KEN_COST = 2500000   -- adjust if game updates the price
+Spirit.kenBought = Spirit.kenBought or false
 
 local LPC = Spirit.FunctionsHandler.LocalPlayerController
 
@@ -43,81 +49,64 @@ end)
 LPC:RegisterMethod("ConfigurationAbilitiesToggle", function() end)
 
 -- ═══════════════════════════════════════════════════════════════
--- ABILITY BUYER
---   Geppo, Soru → level 20+
---   Buso Haki   → level 100+
---   Ken (Instinct / Observation) → level 700+ ONLY
+-- ABILITY FLOW — strict level gates
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     repeat task.wait(1) until Spirit.Character and Spirit.Character:FindFirstChildOfClass("Humanoid")
     repeat task.wait(1) until LocalPlayer:FindFirstChild("Data")
-    task.wait(5)
+    task.wait(3)
 
-    local bought = {Geppo = false, Buso = false, Ken = false, Soru = false}
+    local bought = {Buso = false, Soru = false}
 
     local function hasTag(name)
         local ok, v = pcall(function() return LocalPlayer:HasTag(name) end)
         return ok and v == true
     end
 
-    while task.wait(30) do
+    while task.wait(10) do
         pcall(function()
-            local lv = ScriptStorage.PlayerData.Level or 0
-            if lv < 20 then return end
+            local lv   = ScriptStorage.PlayerData.Level or 0
+            local beli = ScriptStorage.PlayerData.Beli or 0
 
-            -- Geppo
-            if not bought.Geppo then
-                local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Geppo") end)
+            -- Level 70 → Buso (aura)
+            if lv >= 70 and not bought.Buso and not hasTag("Buso") then
+                local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Buso") end)
                 if ok then
-                    bought.Geppo = true
-                    print("[player] Geppo purchased")
+                    bought.Buso = true
+                    print("[player] Buso purchased at level " .. lv)
                 end
                 task.wait(0.5)
             end
 
-            -- Soru
-            if not bought.Soru then
+            -- Level 70 → Soru (flash step)
+            if lv >= 70 and not bought.Soru then
                 local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Soru") end)
                 if ok then
                     bought.Soru = true
-                    print("[player] Soru purchased")
+                    print("[player] Soru purchased at level " .. lv)
                 end
                 task.wait(0.5)
             end
 
-            -- Buso Haki — level 100+
-            if lv >= 100 then
-                if not bought.Buso and not hasTag("Buso") then
-                    local ok = pcall(function() return Remotes.CommF_:InvokeServer("BuyHaki", "Buso") end)
-                    if ok then
-                        bought.Buso = true
-                        print("[player] Buso Haki purchased")
-                    end
-                    task.wait(0.5)
-                end
-            end
-
-            -- Ken / Instinct / Observation Haki — STRICTLY level 700+
-            if lv >= 700 then
-                if not bought.Ken and not hasTag("Ken") then
+            -- Level 700 → Ken (only if Beli >= KEN_COST)
+            if lv >= 700 and not Spirit.kenBought and not hasTag("Ken") then
+                if beli >= KEN_COST then
                     local ok = pcall(function() return Remotes.CommF_:InvokeServer("KenTalk", "Buy") end)
                     if ok then
-                        bought.Ken = true
-                        print("[player] Ken (Observation Haki) purchased")
+                        Spirit.kenBought = true
+                        print(("[player] Ken purchased at level %d with %.2fM Beli"):format(lv, beli / 1e6))
                     end
-                    task.wait(0.5)
+                else
+                    local need = (KEN_COST - beli) / 1e6
+                    SetTask("SubTask", ("Saving for Ken — %.2fM / 2.5M"):format(beli / 1e6))
                 end
-            end
-
-            if bought.Geppo and bought.Soru and bought.Buso and bought.Ken then
-                while task.wait(60) do end
             end
         end)
     end
 end)
 
 -- ═══════════════════════════════════════════════════════════════
--- AUTO AURA — keep Buso Haki active
+-- AUTO AURA — keep Buso active
 -- ═══════════════════════════════════════════════════════════════
 task.spawn(function()
     while task.wait(1) do
@@ -132,15 +121,12 @@ task.spawn(function()
     end
 end)
 
--- ═══════════════════════════════════════════════════════════════
--- AUTO KEN — only if the player actually has Ken (level 700+)
--- ═══════════════════════════════════════════════════════════════
+-- AUTO KEN — only after Ken is purchased
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
             if not (Spirit.Config and Spirit.Config.AutoKen) then return end
-            local lv = ScriptStorage.PlayerData.Level or 0
-            if lv < 700 then return end
+            if not Spirit.kenBought then return end
             local char = Spirit.Character
             if not char then return end
             if char:FindFirstChild("HasKen") then return end
