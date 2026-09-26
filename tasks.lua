@@ -101,13 +101,15 @@ end
 -- ═══════════════════════════════════════════════════════════════
 -- TASK ORDER — first match wins
 -- CollectDrops is first so fruit collection pauses farming.
+-- CakePrinceTask is registered but not dispatched — mastery is
+-- gained passively while LevelFarm attacks.
 -- ═══════════════════════════════════════════════════════════════
 Spirit.TasksOrder = {
     "CollectDrops",          -- fruit priority
 
     "SpecialBossesTask", "SwordBossTask", "BossesTask",
     "RaidController", "AutoRaidIce",
-    "CakePrinceTask", "MeleesController",
+    "MeleesController",
     "LevelFarm",
 
     "Tushita", "Yama", "Saber", "CursedDualKatana", "SoulGuitar",
