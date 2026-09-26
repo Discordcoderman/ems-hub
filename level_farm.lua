@@ -397,6 +397,7 @@ local LF = Spirit.FunctionsHandler.LevelFarm
 local BonesCooldown = 0
 local LastStartQuest = 0
 local LastAbandon = 0
+local LastDebug = 0
 
 LF:RegisterMethod("Refresh", function()
     if _G.SeaTransitionActive then return nil end
@@ -405,6 +406,14 @@ end)
 
 LF:RegisterMethod("Start", function(step)
     local currentLevel = ScriptStorage.PlayerData.Level or 0
+
+    -- Debug every 3s so we can see exactly what path is executing
+    if os.time() - LastDebug > 3 then
+        LastDebug = os.time()
+        print(("[LF] Start called | step=%s lv=%s sea=%s"):format(
+            tostring(step), tostring(currentLevel), tostring(Spirit.SeaIndex)))
+    end
+
     if currentLevel >= 700 and Spirit.SeaIndex == 1 then return end
 
     if Spirit.SeaIndex == 3 then
@@ -424,8 +433,13 @@ LF:RegisterMethod("Start", function(step)
 
     local Q = ManualLevelLookup()
     if not Q then
-        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel))
+        Spirit.Report("LevelFarm: no mob for lv=" .. tostring(currentLevel) .. " sea=" .. tostring(Spirit.SeaIndex))
         return
+    end
+
+    if os.time() - LastDebug > 3 then
+        print(("[LF] Q=%s / %s (PosQ=%s)"):format(
+            tostring(Q.Mon), tostring(Q.Qname), tostring(Q.PosQ)))
     end
 
     local remoteQuest = Spirit.QuestController and Spirit.QuestController.CurrentQuestName or ""
