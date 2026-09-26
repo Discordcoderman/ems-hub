@@ -198,24 +198,37 @@ MC:RegisterMethod("Start", function()
                 return
             end
 
-            -- Owned, needs mastery. Train it.
+            -- ─── Owned but not yet mastered ───
             SetTask("MainTask", "Auto Melee | Training " .. m.name .. " " .. mst .. "/" .. m.target)
+
+            -- Equip the training melee (CombatController.Attack reads _G.SelectWeapon)
             _G.SelectWeapon = m.name
             pcall(function()
                 Spirit.FunctionsHandler.LocalPlayerController.Methods.EquipTool:Call(m.name)
             end)
 
-            local mob = nil
-            if Spirit.ManualLevelLookup then
-                local ok, lookup = pcall(Spirit.ManualLevelLookup)
-                if ok and lookup and lookup.Mon then mob = lookup.Mon end
-            end
-
-            if mob then
-                Spirit.CombatController.Attack(mob)
+            -- Delegate to LevelFarm so the quest gets accepted before attacking.
+            -- CombatController.Attack inside LevelFarm picks up _G.SelectWeapon
+            -- and equips the training melee automatically, so mastery gain
+            -- still routes to the right melee.
+            local LF = Spirit.FunctionsHandler.LevelFarm
+            if LF and LF.Methods and LF.Methods.Start then
+                local ok = pcall(function() LF.Methods.Start:Call(4) end)
+                if not ok then
+                    local mob = nil
+                    if Spirit.ManualLevelLookup then
+                        local ok2, lookup = pcall(Spirit.ManualLevelLookup)
+                        if ok2 and lookup and lookup.Mon then mob = lookup.Mon end
+                    end
+                    if mob then Spirit.CombatController.Attack(mob) end
+                end
             else
-                local nearest = Spirit.GetMonAsSortedRange()[1]
-                if nearest then Spirit.CombatController.Attack(nearest.Name) end
+                local mob = nil
+                if Spirit.ManualLevelLookup then
+                    local ok3, lookup = pcall(Spirit.ManualLevelLookup)
+                    if ok3 and lookup and lookup.Mon then mob = lookup.Mon end
+                end
+                if mob then Spirit.CombatController.Attack(mob) end
             end
             return
         end
