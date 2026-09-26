@@ -25,6 +25,7 @@ Spirit.shouldTween    = false
 Spirit.TweenDebounce  = false
 Spirit.TweenInstance  = nil
 Spirit.TweenInstance2 = nil
+Spirit.TweenDestination = nil
 
 local noclipActive = false
 
@@ -32,9 +33,7 @@ local function setCharacterCollision(state)
     local char = LocalPlayer.Character
     if not char then return end
     for _, part in ipairs(char:GetChildren()) do
-        if part:IsA("BasePart") then
-            part.CanCollide = state
-        end
+        if part:IsA("BasePart") then part.CanCollide = state end
     end
 end
 Spirit.SetCharacterCollision = setCharacterCollision
@@ -96,19 +95,15 @@ local function GetPortal(target)
     if tick() - portalCooldown < 2 then return nil end
     portalCooldown = tick()
     if not target then return nil end
-
     local targetPos
     if typeof(target) == "CFrame" then targetPos = target.Position
     elseif typeof(target) == "Vector3" then targetPos = target
     else return nil end
-
     local portals = Spirit.Portals or {}
     if #portals == 0 then return nil end
-
     local distanceToTarget = Spirit.CaculateDistance(targetPos)
     local threshold = distanceToTarget - 300
     local best, bestDist = nil, 9e9
-
     for _, p in ipairs(portals) do
         local d = Spirit.CaculateDistance(p, targetPos)
         if d < threshold and d < bestDist then
@@ -116,7 +111,6 @@ local function GetPortal(target)
             best = p
         end
     end
-
     if best then
         pcall(function()
             Spirit.Remotes.CommF_:InvokeServer("requestEntrance", best)
@@ -185,6 +179,16 @@ function TweenController.Create(target)
         return
     end
 
+    -- Already tweening to ~same spot — don't cancel/restart.
+    -- Prevents the "walk a little then reset" loop when a task
+    -- re-issues the same destination every dispatcher tick.
+    if Spirit.TweenInstance
+       and Spirit.TweenInstance.PlaybackState == Enum.PlaybackState.Playing
+       and Spirit.TweenDestination
+       and (Spirit.TweenDestination.Position - destCF.Position).Magnitude < 4 then
+        return
+    end
+
     if Spirit.TweenInstance then
         pcall(function() Spirit.TweenInstance:Cancel() end)
     end
@@ -236,6 +240,7 @@ function TweenController.Create(target)
     local duration = dist / 160
 
     Spirit.shouldTween = true
+    Spirit.TweenDestination = destCF
     Spirit.TweenInstance = Services.TweenService:Create(
         block,
         TweenInfo.new(duration, Enum.EasingStyle.Linear),
